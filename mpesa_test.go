@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/stretchr/testify/require"
 	"io"
 	"net/http"
 	"os"
@@ -15,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -966,7 +967,7 @@ func TestMpesa_DynamicQR(t *testing.T) {
 			tc.mock(app, cl, DynamicQRRequest{
 				Amount:                10,
 				CreditPartyIdentifier: "111222",
-				MerchantName:          "jwambugu",
+				MerchantName:          "Esther",
 				ReferenceNo:           "NULLABLE",
 				Size:                  "500",
 			})

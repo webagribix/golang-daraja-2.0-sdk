@@ -378,8 +378,7 @@ func (m *Mpesa) GenerateAccessToken(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("mpesa: make auth request: %v", err)
 	}
 
-	//goland:noinspection GoUnhandledErrorResult
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	if res.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("mpesa: auth failed with status: %v", res.Status)
@@ -412,8 +411,7 @@ func (m *Mpesa) STKPush(ctx context.Context, passkey string, req STKPushRequest)
 		return nil, err
 	}
 
-	//goland:noinspection GoUnhandledErrorResult
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	return decodeResponse(res)
 }
@@ -497,8 +495,7 @@ func (m *Mpesa) B2C(ctx context.Context, initiatorPwd string, req B2CRequest) (*
 		return nil, err
 	}
 
-	//goland:noinspection GoUnhandledErrorResult
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	return decodeResponse(res)
 }
@@ -529,7 +526,7 @@ func (m *Mpesa) STKQuery(ctx context.Context, passkey string, req STKQueryReques
 	if err != nil {
 		return nil, err
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	return decodeResponse(res)
 }
@@ -621,8 +618,7 @@ func (m *Mpesa) DynamicQR(
 		return nil, err
 	}
 
-	//goland:noinspection GoUnhandledErrorResult
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	var resp *DynamicQRResponse
 	if err = json.NewDecoder(res.Body).Decode(&resp); err != nil {
@@ -666,7 +662,7 @@ func (m *Mpesa) DynamicQR(
 	if err != nil {
 		return nil, fmt.Errorf("mpesa: open png: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if err = png.Encode(f, image); err != nil {
 		return nil, fmt.Errorf("mpesa: encode png: %v", err)
@@ -709,8 +705,7 @@ func (m *Mpesa) GetTransactionStatus(
 		return nil, err
 	}
 
-	//goland:noinspection GoUnhandledErrorResult
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	return decodeResponse(res)
 }
@@ -749,8 +744,7 @@ func (m *Mpesa) GetAccountBalance(
 		return nil, err
 	}
 
-	//goland:noinspection GoUnhandledErrorResult
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	return decodeResponse(res)
 }
@@ -790,8 +784,7 @@ func (m *Mpesa) BusinessPayBill(ctx context.Context, initiatorPwd string, req Bu
 		return nil, err
 	}
 
-	//goland:noinspection GoUnhandledErrorResult
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	return decodeResponse(res)
 }
@@ -828,7 +821,7 @@ func (m *Mpesa) Reversal(ctx context.Context, initiatorPwd string, req ReversalR
 	if err != nil {
 		return nil, err
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	return decodeResponse(res)
 }
@@ -864,7 +857,7 @@ func (m *Mpesa) TaxRemittance(ctx context.Context, initiatorPwd string, req TaxR
 	if err != nil {
 		return nil, err
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	return decodeResponse(res)
 }
@@ -900,7 +893,7 @@ func (m *Mpesa) BusinessBuyGoods(ctx context.Context, initiatorPwd string, req B
 	if err != nil {
 		return nil, err
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	return decodeResponse(res)
 }

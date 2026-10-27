@@ -22,7 +22,7 @@ func loadDotEnv(filepath string) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
@@ -82,7 +82,7 @@ func main() {
 	}
 
 	rawEnv := getVal("", envMap, "DARAJA_ENV", "MPESA_ENV")
-	var env mpesa.Environment = mpesa.EnvironmentSandbox
+	env := mpesa.EnvironmentSandbox
 	if strings.ToLower(rawEnv) == "production" || strings.ToLower(rawEnv) == "prod" {
 		env = mpesa.EnvironmentProduction
 		fmt.Println(">> Target Environment: PRODUCTION (Live M-Pesa)")

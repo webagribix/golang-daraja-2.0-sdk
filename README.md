@@ -269,4 +269,4 @@ go run ./examples/till/main.go --env .env --phone 0759345391 --amount 1
 
 ## License
 
-This project is licensed under the [MIT License](LICENCE). Original work Copyright (c) 2021 Joram Wambugu. Revisions, Daraja 2.0 modernization, and maintenance Copyright (c) 2026 Raphael Webala (Nick Webala).
+This project is licensed under the [MIT License](LICENCE). Original work Copyright (c) 2021 Joram Wambugu. Revisions, Daraja 2.0 modernization, and maintenance Copyright (c) 2026 Nick Webala (Nick Webala).
