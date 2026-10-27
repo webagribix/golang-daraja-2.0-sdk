@@ -210,9 +210,9 @@ func main() {
 	fmt.Printf("   Customer Message:     %s\n", stkResp.CustomerMessage)
 
 	fmt.Println("\n>> Please check your phone now! Enter M-Pesa PIN or Cancel to see real-time status:")
-	fmt.Println("[3/3] Polling transaction outcome in real-time (up to 45s)...")
+	fmt.Println("[3/3] Polling transaction outcome in real-time (up to 60s)...")
 
-	pollResp, err := client.PollSTKStatus(ctx, "", uint(storeShortcode), stkResp.CheckoutRequestID, 45*time.Second, 3*time.Second)
+	pollResp, err := client.PollSTKStatus(ctx, "", uint(storeShortcode), stkResp.CheckoutRequestID, 60*time.Second, 3*time.Second)
 	if err != nil {
 		fmt.Printf(">> Poll ended: %v\n", err)
 	} else {

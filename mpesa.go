@@ -573,7 +573,14 @@ func (m *Mpesa) PollSTKStatus(ctx context.Context, passkey string, shortcode uin
 				continue
 			}
 
-			// When ResultCode is present, Safaricom has completed processing!
+			// ResultCode 4999 or "still under processing" means the customer hasn't completed entering their PIN yet
+			if res.ResultCode == "4999" ||
+				strings.Contains(strings.ToLower(res.ResultDesc), "still under processing") ||
+				strings.Contains(strings.ToLower(res.ResultDesc), "being processed") {
+				continue
+			}
+
+			// When a terminal ResultCode is returned (0 = Success, 1032 = Cancelled, 1037 = Timeout, etc.)
 			if res.ResultCode != "" {
 				return res, nil
 			}
