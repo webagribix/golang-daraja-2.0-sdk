@@ -7,22 +7,27 @@
 
 A modern, fast, and idiomatic Go client library for integrating Safaricom's **M-Pesa Daraja 2.0 APIs** into your Go backend microservices and web applications.
 
+Designed with an AWS SDK-style clean configuration pattern, automatic phone normalization, token caching, and real-time status polling.
+
 ---
 
 ## Features
 
-- **OAuth 2.0 Token Caching**: Automatic authentication and token lifecycle management with in-memory caching.
-- **Lipa Na M-Pesa Online (STK Push)**: Prompt customers to enter their M-Pesa PIN and authorize payments directly from their mobile phones.
-- **M-Pesa Express Query**: Check and poll the status of an ongoing STK Push request.
-- **B2C (Business to Customer)**: Disburse funds directly from your business short code to customer mobile numbers (e.g. salaries, payouts, promotions).
-- **B2B (Business to Business)**: Make payments directly to other Paybill numbers or Buy Goods merchant tills.
+- **AWS SDK-Style Client Config**: Simple `mpesa.New(mpesa.Config{...})` setup.
+- **Phone Number Normalization**: Automatically converts any Kenyan phone format (`07...`, `01...`, `+254...`, `7...`) into standard `254XXXXXXXXX`.
+- **Lipa Na M-Pesa Online (STK Push)**: Supports both **PayBill** and **Buy Goods (Till Number)** payments.
+- **Real-Time Outcome Polling (`PollSTKStatus`)**: In-process polling helper that waits for the user to complete their PIN prompt and returns immediate results (`Success`, `Cancelled`, `Wrong PIN`, `Insufficient Funds`).
+- **OAuth 2.0 Token Caching**: Automatic token generation and in-memory lifecycle caching (~55 min TTL).
+- **Webhook & Callback Helpers**: Pre-built deserializers with `.IsSuccessful()` and `.ReceiptNumber()` helper methods.
+- **B2C (Business to Customer)**: Disburse funds directly from your business short code to customer mobile numbers (salaries, payouts, refunds).
+- **B2B (Business to Business)**: Make payments to other Paybill numbers or Buy Goods merchant tills.
 - **Transaction Reversal**: Initiate reversals for mistaken or disputed transactions.
 - **Tax Remittance**: Pay taxes directly from your business account to the Kenya Revenue Authority (KRA).
-- **Dynamic QR Codes**: Generate dynamic M-Pesa QR codes for merchant tills.
 - **Account Balance & Status**: Enquire organization account balances and inspect status of previous transactions.
-- **C2B URL Registration**: Register Validation and Confirmation callback endpoints for Paybill/Till transactions.
-- **Custom Certificate Loading**: Pass custom or updated Safaricom public security certificates dynamically (`.cer` file or PEM byte slice) without hardcoding dependencies.
-- **Structured Error Handling**: Inspect typed errors (`APIError`) exposing `StatusCode`, `ErrorCode`, `RequestID`, and `ErrorMessage`.
+- **Dynamic QR Codes**: Generate dynamic M-Pesa QR codes for merchant tills.
+- **C2B URL Registration**: Register Validation and Confirmation callback endpoints.
+- **Dynamic Certificate Loading**: Pass custom or updated Safaricom public security certificates (`.cer` file or PEM byte slice) without code changes.
+- **Structured Error Handling**: Typed errors (`APIError`) exposing `StatusCode`, `ErrorCode`, `RequestID`, and `ErrorMessage`.
 
 ---
 
@@ -34,7 +39,9 @@ go get github.com/webagribix/golang-daraja-2.0-sdk
 
 ---
 
-## Quickstart
+## Quickstart: How to Use in Your Application
+
+Similar to how you configure AWS or Backblaze SDKs, initialize the client using `mpesa.Config`:
 
 ```go
 package main
@@ -43,65 +50,93 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/http"
 	"time"
 
 	mpesa "github.com/webagribix/golang-daraja-2.0-sdk"
 )
 
 func main() {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
+	ctx := context.Background()
 
-	// Initialize the M-Pesa client (EnvironmentSandbox or EnvironmentProduction)
-	client := mpesa.NewApp(
-		http.DefaultClient,
-		"YOUR_CONSUMER_KEY",
-		"YOUR_CONSUMER_SECRET",
-		mpesa.EnvironmentSandbox,
-	)
-
-	// 1. Initiate Lipa Na M-Pesa Online (STK Push)
-	stkResp, err := client.STKPush(ctx, "YOUR_PASSKEY", mpesa.STKPushRequest{
-		BusinessShortCode: 174379,
-		TransactionType:   mpesa.CustomerPayBillOnlineTransactionType,
-		Amount:            10,
-		PartyA:            254708374149,
-		PartyB:            174379,
-		PhoneNumber:       254708374149,
-		CallBackURL:       "https://yourdomain.com/callbacks/stk",
-		AccountReference:  "INV-10023",
-		TransactionDesc:   "Payment for Order #10023",
+	// 1. Initialize Daraja Client
+	client, err := mpesa.New(mpesa.Config{
+		ConsumerKey:    "YOUR_CONSUMER_KEY",
+		ConsumerSecret: "YOUR_CONSUMER_SECRET",
+		Passkey:        "YOUR_ONLINE_PASSKEY", // Optional: sets default passkey for STK operations
+		Environment:    mpesa.EnvironmentProduction, // or mpesa.EnvironmentSandbox
 	})
 	if err != nil {
-		log.Fatalf("STK Push failed: %v", err)
+		log.Fatalf("failed to create client: %v", err)
 	}
 
-	fmt.Printf("CheckoutRequestID: %s\n", stkResp.CheckoutRequestID)
+	// 2. Normalize customer phone number (accepts 07..., 01..., +254...)
+	phone, err := mpesa.NormalizePhoneNumberUint64("0759345391")
+	if err != nil {
+		log.Fatalf("invalid phone: %v", err)
+	}
 
-	// 2. Query STK Push status
-	queryResp, err := client.STKQuery(ctx, "YOUR_PASSKEY", mpesa.STKQueryRequest{
-		BusinessShortCode: 174379,
-		CheckoutRequestID: stkResp.CheckoutRequestID,
+	// 3. Send STK Push prompt (Buy Goods Till example)
+	stkResp, err := client.STKPush(ctx, "", mpesa.STKPushRequest{
+		BusinessShortCode: 7372538,                             // Store Number
+		TransactionType:   mpesa.CustomerBuyGoodsOnlineTransactionType, // For Till Number
+		Amount:            1,
+		PartyA:            uint(phone),
+		PartyB:            3325969,                             // Till Number
+		PhoneNumber:       phone,
+		CallBackURL:       "https://yourdomain.com/api/callbacks/mpesa",
+		AccountReference:  "Order-1049",
+		TransactionDesc:   "Payment for Order #1049",
 	})
 	if err != nil {
-		log.Fatalf("STK Query failed: %v", err)
+		log.Fatalf("STK Push error: %v", err)
 	}
 
-	fmt.Printf("Status: %s - %s\n", queryResp.ResponseCode, queryResp.ResponseDescription)
+	fmt.Printf("STK Prompt sent! CheckoutID: %s\n", stkResp.CheckoutRequestID)
+
+	// 4. Real-time Outcome Polling (Polls up to 45s while user enters PIN)
+	result, err := client.PollSTKStatus(ctx, "", 7372538, stkResp.CheckoutRequestID, 45*time.Second, 3*time.Second)
+	if err != nil {
+		log.Fatalf("Polling error: %v", err)
+	}
+
+	if result.IsSuccessful() {
+		fmt.Printf("Payment Successful! Description: %s\n", result.ResultDesc)
+	} else {
+		fmt.Printf("Payment Failed/Cancelled (%s): %s\n", result.ResultCode, result.ResultDesc)
+	}
 }
 ```
 
 ---
 
-## Usage Examples
+## Detailed Usage Guides
 
-### 1. Handling Callback Notifications
+### 1. PayBill vs Buy Goods (Till Number)
 
-#### STK Push Callback
+| Parameter | PayBill Payment | Buy Goods (Till Number) |
+|---|---|---|
+| `TransactionType` | `mpesa.CustomerPayBillOnlineTransactionType` | `mpesa.CustomerBuyGoodsOnlineTransactionType` |
+| `BusinessShortCode` | PayBill Number (e.g. `174379`) | Store Number / Head Office Shortcode |
+| `PartyB` | PayBill Number | Customer-facing Till Number |
+| `AccountReference` | Account / Invoice Number | Till Name or Reference |
+
+---
+
+### 2. Handling Webhook Callbacks
+
+Safaricom sends the definitive payment result asynchronously to your `CallBackURL`.
 
 ```go
-http.HandleFunc("/callbacks/stk", func(w http.ResponseWriter, r *http.Request) {
+package main
+
+import (
+	"log"
+	"net/http"
+
+	mpesa "github.com/webagribix/golang-daraja-2.0-sdk"
+)
+
+func handleMpesaCallback(w http.ResponseWriter, r *http.Request) {
 	callback, err := mpesa.UnmarshalSTKPushCallback(r.Body)
 	if err != nil {
 		http.Error(w, "invalid payload", http.StatusBadRequest)
@@ -109,65 +144,50 @@ http.HandleFunc("/callbacks/stk", func(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cb := callback.Body.STKCallback
-	if cb.ResultCode == 0 {
-		log.Printf("Payment Success! CheckoutID: %s", cb.CheckoutRequestID)
-		for _, item := range cb.CallbackMetadata.Item {
-			log.Printf("Metadata: %s = %v", item.Name, item.Value)
-		}
+	if cb.IsSuccessful() {
+		receipt := cb.ReceiptNumber() // Extracts receipt (e.g. SI28X912)
+		log.Printf("Payment SUCCESS! Receipt: %s, Checkout: %s", receipt, cb.CheckoutRequestID)
 	} else {
-		log.Printf("Payment Failed (%d): %s", cb.ResultCode, cb.ResultDesc)
+		log.Printf("Payment FAILED/CANCELLED: Code=%d, Desc=%s", cb.ResultCode, cb.ResultDesc)
 	}
 
+	// Always respond 200 OK to acknowledge receipt
 	w.WriteHeader(http.StatusOK)
-})
+}
 ```
 
-#### General Callbacks (B2C, Balance, Reversal)
+---
+
+### 3. Business to Customer (B2C Payouts & Refunds)
 
 ```go
-http.HandleFunc("/callbacks/b2c", func(w http.ResponseWriter, r *http.Request) {
-	callback, err := mpesa.UnmarshalCallback(r.Body)
-	if err != nil {
-		http.Error(w, "invalid payload", http.StatusBadRequest)
-		return
-	}
+client, _ := mpesa.New(mpesa.Config{
+	ConsumerKey:       "KEY",
+	ConsumerSecret:    "SECRET",
+	InitiatorPassword: "INITIATOR_PASSWORD",
+	Environment:       mpesa.EnvironmentProduction,
+})
 
-	result := callback.Result
-	log.Printf("ConversationID: %s, ResultCode: %d, ResultDesc: %s",
-		result.ConversationID, result.ResultCode, result.ResultDesc)
-
-	w.WriteHeader(http.StatusOK)
+resp, err := client.B2C(ctx, "", mpesa.B2CRequest{
+	InitiatorName:   "api_operator",
+	CommandID:       mpesa.BusinessPaymentCommandID, // or SalaryPaymentCommandID, PromotionPaymentCommandID
+	Amount:          500,
+	PartyA:          600000,
+	PartyB:          254759345391,
+	Remarks:         "Refund for order #982",
+	QueueTimeOutURL: "https://yourdomain.com/callbacks/timeout",
+	ResultURL:       "https://yourdomain.com/callbacks/b2c",
 })
 ```
 
 ---
 
-### 2. Business to Customer (B2C)
-
-Disburse funds to a customer's registered phone number:
-
-```go
-resp, err := client.B2C(ctx, "YOUR_INITIATOR_PASSWORD", mpesa.B2CRequest{
-	InitiatorName:      "api_operator",
-	CommandID:          mpesa.BusinessPaymentCommandID, // or SalaryPaymentCommandID, PromotionPaymentCommandID
-	Amount:             500,
-	PartyA:             600000,
-	PartyB:             254708374149,
-	Remarks:            "Refund for order #982",
-	QueueTimeOutURL:    "https://yourdomain.com/callbacks/timeout",
-	ResultURL:          "https://yourdomain.com/callbacks/b2c",
-	Occasion:           "Refund",
-})
-```
-
----
-
-### 3. Transaction Reversal
+### 4. Transaction Reversal
 
 Reverse a mistaken or disputed transaction:
 
 ```go
-resp, err := client.Reversal(ctx, "YOUR_INITIATOR_PASSWORD", mpesa.ReversalRequest{
+resp, err := client.Reversal(ctx, "", mpesa.ReversalRequest{
 	Initiator:              "api_operator",
 	TransactionID:          "LK12345678",
 	Amount:                 100,
@@ -181,12 +201,12 @@ resp, err := client.Reversal(ctx, "YOUR_INITIATOR_PASSWORD", mpesa.ReversalReque
 
 ---
 
-### 4. Tax Remittance (KRA)
+### 5. Tax Remittance (KRA)
 
 Pay business taxes directly to the Kenya Revenue Authority:
 
 ```go
-resp, err := client.TaxRemittance(ctx, "YOUR_INITIATOR_PASSWORD", mpesa.TaxRemittanceRequest{
+resp, err := client.TaxRemittance(ctx, "", mpesa.TaxRemittanceRequest{
 	Initiator:        "api_operator",
 	Amount:           15000,
 	PartyA:           600000,
@@ -200,72 +220,53 @@ resp, err := client.TaxRemittance(ctx, "YOUR_INITIATOR_PASSWORD", mpesa.TaxRemit
 
 ---
 
-### 5. Custom Certificate Configuration
+### 6. Dynamic Certificate Management
 
-Safaricom rotates Daraja security certificates periodically. You can dynamically pass an updated certificate file or PEM string without waiting for a new SDK release:
+When Safaricom rotates its public certificate, pass the updated certificate directly in your config without waiting for a new SDK release:
 
 ```go
-// Option A: From a certificate file (.cer / .pem)
-err := client.WithCertificateFile("./certs/safaricom_prod_2026.cer")
-if err != nil {
-	log.Fatalf("Failed to load certificate: %v", err)
-}
-
-// Option B: From raw PEM bytes (e.g. loaded from environment variable or secret manager)
-client.WithCertificatePEM([]byte("-----BEGIN CERTIFICATE-----\n..."))
+client, err := mpesa.New(mpesa.Config{
+	ConsumerKey:     "KEY",
+	ConsumerSecret:  "SECRET",
+	CertificateFile: "./certs/ProductionCertificate.cer", // Load from file
+	// OR: CertificatePEM: []byte(os.Getenv("SAFARICOM_CERT_PEM")), // From ENV
+	Environment:     mpesa.EnvironmentProduction,
+})
 ```
 
 ---
 
-### 6. Structured Error Handling
+### 7. Structured Error Inspection
 
-Inspect typed errors returned from the Safaricom gateway:
+Safaricom returns structured JSON error responses with exact error codes. You can inspect them using Go's `errors.As`:
 
 ```go
-stkResp, err := client.STKPush(ctx, "passkey", req)
+stkResp, err := client.STKPush(ctx, "", req)
 if err != nil {
 	var apiErr *mpesa.APIError
 	if errors.As(err, &apiErr) {
 		log.Printf("HTTP Status: %d", apiErr.StatusCode)
-		log.Printf("Request ID: %s", apiErr.RequestID)
-		log.Printf("Error Code: %s", apiErr.ErrorCode)
-		log.Printf("Error Message: %s", apiErr.ErrorMessage)
+		log.Printf("Error Code:  %s", apiErr.ErrorCode)
+		log.Printf("Request ID:  %s", apiErr.RequestID)
+		log.Printf("Message:     %s", apiErr.ErrorMessage)
 	} else {
-		log.Printf("Generic error: %v", err)
+		log.Printf("Network/client error: %v", err)
 	}
 }
 ```
 
 ---
 
-## Supported APIs Summary
+## Interactive Local Testing
 
-| API | Method | Description |
-|---|---|---|
-| **STK Push** | `client.STKPush` | Prompts user on phone to enter PIN |
-| **STK Query** | `client.STKQuery` | Checks status of an STK push transaction |
-| **B2C** | `client.B2C` | Disburses money to customer mobile number |
-| **Business PayBill** | `client.BusinessPayBill` | Pays money from short code to PayBill number |
-| **Business Buy Goods** | `client.BusinessBuyGoods` | Pays money from short code to Merchant Till |
-| **Reversal** | `client.Reversal` | Reverses an M-Pesa transaction |
-| **Tax Remittance** | `client.TaxRemittance` | Remits taxes to KRA short code |
-| **Account Balance** | `client.GetAccountBalance` | Enquires balance on till/paybill account |
-| **Transaction Status** | `client.GetTransactionStatus` | Queries status of any transaction |
-| **Dynamic QR** | `client.DynamicQR` | Generates dynamic M-Pesa QR code |
-| **C2B Register URL** | `client.RegisterC2BURL` | Registers confirmation and validation URLs |
-
----
-
-## Testing
-
-Run tests and race detector checks:
+An interactive testing runner for Till Numbers and PayBills is provided in `examples/till`:
 
 ```bash
-go test -v -race ./...
+go run ./examples/till/main.go --env .env --phone 0759345391 --amount 1
 ```
 
 ---
 
 ## License
 
-This project is licensed under the [MIT License](LICENCE). Original work Copyright (c) 2021 Joram Wambugu. Revisions and Daraja 2.0 modernization Copyright (c) 2026 Raphael Webala (Nick Webala).
+This project is licensed under the [MIT License](LICENCE). Original work Copyright (c) 2021 Joram Wambugu. Revisions, Daraja 2.0 modernization, and maintenance Copyright (c) 2026 Raphael Webala (Nick Webala).
