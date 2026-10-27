@@ -192,7 +192,7 @@ resp, err := client.Reversal(ctx, "", mpesa.ReversalRequest{
 	TransactionID:          "LK12345678",
 	Amount:                 100,
 	ReceiverParty:          600000,
-	RecieverIdentifierType: mpesa.ShortcodeIdentifierType,
+	ReceiverIdentifierType: mpesa.ShortcodeIdentifierType,
 	QueueTimeOutURL:        "https://yourdomain.com/callbacks/timeout",
 	ResultURL:              "https://yourdomain.com/callbacks/reversal",
 	Remarks:                "Erroneous transaction reversal",

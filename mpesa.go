@@ -36,6 +36,7 @@ const (
 	EnvironmentProduction
 )
 
+// ResponseType specifies the fallback action if your validation URL is unreachable (Completed or Canceled).
 type ResponseType string
 
 const (
@@ -67,6 +68,7 @@ func (e Environment) BaseURL() string {
 	return productionBaseURL
 }
 
+// HttpClient is an interface for sending HTTP requests, compatible with *http.Client.
 type HttpClient interface {
 	Do(req *http.Request) (*http.Response, error)
 }
@@ -74,7 +76,7 @@ type HttpClient interface {
 //go:embed certs
 var certFS embed.FS
 
-// Mpesa is an app to make a transaction
+// Mpesa represents an M-Pesa Daraja 2.0 API client used to perform payments, queries, and administrative operations.
 type Mpesa struct {
 	client         HttpClient
 	environment    Environment
@@ -783,7 +785,7 @@ func (m *Mpesa) BusinessPayBill(ctx context.Context, initiatorPwd string, req Bu
 
 	req.SecurityCredential = securityCredential
 	req.CommandID = BusinessPayBillCommandID
-	req.RecieverIdentifierType = ShortcodeIdentifierType
+	req.ReceiverIdentifierType = ShortcodeIdentifierType
 	req.SenderIdentifierType = ShortcodeIdentifierType
 
 	res, err := m.makeHttpRequestWithToken(ctx, http.MethodPost, m.endpointBusinessPayBill(), req)
@@ -820,8 +822,8 @@ func (m *Mpesa) Reversal(ctx context.Context, initiatorPwd string, req ReversalR
 
 	req.SecurityCredential = securityCredential
 	req.CommandID = TransactionReversalCommandID
-	if req.RecieverIdentifierType == 0 {
-		req.RecieverIdentifierType = ShortcodeIdentifierType
+	if req.ReceiverIdentifierType == 0 {
+		req.ReceiverIdentifierType = ShortcodeIdentifierType
 	}
 
 	res, err := m.makeHttpRequestWithToken(ctx, http.MethodPost, m.endpointReversal(), req)
@@ -858,7 +860,7 @@ func (m *Mpesa) TaxRemittance(ctx context.Context, initiatorPwd string, req TaxR
 	req.SecurityCredential = securityCredential
 	req.CommandID = PayTaxToKRACommandID
 	req.SenderIdentifierType = ShortcodeIdentifierType
-	req.RecieverIdentifierType = ShortcodeIdentifierType
+	req.ReceiverIdentifierType = ShortcodeIdentifierType
 
 	res, err := m.makeHttpRequestWithToken(ctx, http.MethodPost, m.endpointTaxRemittance(), req)
 	if err != nil {
@@ -893,7 +895,7 @@ func (m *Mpesa) BusinessBuyGoods(ctx context.Context, initiatorPwd string, req B
 
 	req.SecurityCredential = securityCredential
 	req.CommandID = BusinessBuyGoodsCommandID
-	req.RecieverIdentifierType = ShortcodeIdentifierType
+	req.ReceiverIdentifierType = ShortcodeIdentifierType
 	req.SenderIdentifierType = ShortcodeIdentifierType
 
 	res, err := m.makeHttpRequestWithToken(ctx, http.MethodPost, m.endpointBusinessPayBill(), req)
@@ -905,7 +907,8 @@ func (m *Mpesa) BusinessBuyGoods(ctx context.Context, initiatorPwd string, req B
 	return decodeResponse(res)
 }
 
-// APIError represents an error returned by the Safaricom M-Pesa Daraja API.
+// APIError represents a structured error returned by the Safaricom M-Pesa Daraja API.
+// It can be inspected with errors.As(err, &apiErr) to extract StatusCode, RequestID, ErrorCode, and ErrorMessage.
 type APIError struct {
 	StatusCode   int    `json:"-"`
 	RequestID    string `json:"requestId,omitempty"`

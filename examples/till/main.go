@@ -183,7 +183,7 @@ func main() {
 		BusinessShortCode: uint(storeShortcode),
 		TransactionType:   mpesa.CustomerBuyGoodsOnlineTransactionType,
 		Amount:            *amountFlag,
-		PartyA:            uint(phoneUint64),
+		PartyA:            phoneUint64,
 		PartyB:            uint(tillNumber),
 		PhoneNumber:       phoneUint64,
 		CallBackURL:       callbackURL,

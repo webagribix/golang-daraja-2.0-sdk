@@ -1383,7 +1383,7 @@ func TestMpesa_BusinessPayBill(t *testing.T) {
 					err := json.NewDecoder(req.Body).Decode(&reqParams)
 					require.NoError(t, err)
 					require.NotEmpty(t, reqParams.SecurityCredential) // TODO: verify the security credential
-					require.Equal(t, ShortcodeIdentifierType, reqParams.RecieverIdentifierType)
+					require.Equal(t, ShortcodeIdentifierType, reqParams.ReceiverIdentifierType)
 					require.Equal(t, ShortcodeIdentifierType, reqParams.SenderIdentifierType)
 					require.Equal(t, BusinessPayBillCommandID, reqParams.CommandID)
 
