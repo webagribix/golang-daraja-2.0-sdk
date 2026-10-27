@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 // Environment indicates the current mode the application is running on. Either EnvironmentSandbox or EnvironmentProduction.
@@ -105,6 +106,39 @@ func validateURL(rawURL string) error {
 	}
 
 	return nil
+}
+
+// NormalizePhoneNumber formats any Kenyan phone number into the standard Safaricom Daraja format (2547XXXXXXXX or 2541XXXXXXXX).
+// It accepts inputs like "+254712345678", "0712345678", "712345678", "0112345678", or "254712345678".
+func NormalizePhoneNumber(phone string) (string, error) {
+	var digits strings.Builder
+	for _, r := range phone {
+		if unicode.IsDigit(r) {
+			digits.WriteRune(r)
+		}
+	}
+
+	cleaned := digits.String()
+	if strings.HasPrefix(cleaned, "0") && len(cleaned) == 10 {
+		cleaned = "254" + cleaned[1:]
+	} else if (strings.HasPrefix(cleaned, "7") || strings.HasPrefix(cleaned, "1")) && len(cleaned) == 9 {
+		cleaned = "254" + cleaned
+	}
+
+	if len(cleaned) != 12 || !strings.HasPrefix(cleaned, "254") {
+		return "", fmt.Errorf("mpesa: invalid phone number %q, expected valid Kenyan phone number (e.g. 07XXXXXXXX, 01XXXXXXXX, or 2547XXXXXXXX)", phone)
+	}
+
+	return cleaned, nil
+}
+
+// NormalizePhoneNumberUint64 normalizes a phone string and returns it as a uint64 ready for SDK requests.
+func NormalizePhoneNumberUint64(phone string) (uint64, error) {
+	normalized, err := NormalizePhoneNumber(phone)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseUint(normalized, 10, 64)
 }
 
 // NewApp initializes a new Mpesa app that will be used to perform C2B or B2C transactions.

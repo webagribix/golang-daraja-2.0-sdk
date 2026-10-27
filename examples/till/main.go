@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -15,136 +16,214 @@ import (
 	mpesa "github.com/webagribix/golang-daraja-2.0-sdk"
 )
 
-// Helper to read from env or prompt user via CLI
-func getEnvOrPrompt(reader *bufio.Reader, key, promptDefault, description string) string {
-	if val := os.Getenv(key); val != "" {
-		return val
+// loadDotEnv parses a simple key=value .env file without external dependencies
+func loadDotEnv(filepath string) (map[string]string, error) {
+	envMap := make(map[string]string)
+	file, err := os.Open(filepath)
+	if err != nil {
+		return nil, err
 	}
-	fmt.Printf("%s [%s]: ", description, promptDefault)
-	input, _ := reader.ReadString('\n')
-	input = strings.TrimSpace(input)
-	if input == "" {
-		return promptDefault
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			val := strings.TrimSpace(parts[1])
+			val = strings.Trim(val, `"'`)
+			envMap[key] = val
+		}
 	}
-	return input
+	return envMap, scanner.Err()
 }
 
-func parseUint(s string) uint {
-	val, err := strconv.ParseUint(strings.TrimSpace(s), 10, 64)
-	if err != nil {
-		log.Fatalf("Invalid number '%s': %v", s, err)
+func getVal(flagVal string, envMap map[string]string, keys ...string) string {
+	if strings.TrimSpace(flagVal) != "" {
+		return strings.TrimSpace(flagVal)
 	}
-	return uint(val)
-}
-
-func parseUint64(s string) uint64 {
-	val, err := strconv.ParseUint(strings.TrimSpace(s), 10, 64)
-	if err != nil {
-		log.Fatalf("Invalid number '%s': %v", s, err)
+	for _, k := range keys {
+		if envMap != nil {
+			if v, ok := envMap[k]; ok && strings.TrimSpace(v) != "" {
+				return strings.TrimSpace(v)
+			}
+		}
+		if v := os.Getenv(k); strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
 	}
-	return val
+	return ""
 }
 
 func main() {
-	reader := bufio.NewReader(os.Stdin)
+	envFileFlag := flag.String("env", ".env", "Path to .env configuration file")
+	phoneFlag := flag.String("phone", "", "Phone number to send STK prompt (e.g., 0712345678, +254712345678, or 254712345678)")
+	amountFlag := flag.Uint("amount", 1, "Amount in KES to charge")
+	flag.Parse()
+
 	fmt.Println("==================================================")
 	fmt.Println("  M-Pesa Daraja 2.0 SDK - Till (Buy Goods) Tester ")
 	fmt.Println("==================================================")
-	fmt.Println()
 
-	envChoice := getEnvOrPrompt(reader, "MPESA_ENV", "sandbox", "Environment ('sandbox' or 'production')")
-	var env mpesa.Environment = mpesa.EnvironmentSandbox
-	if strings.ToLower(envChoice) == "production" || strings.ToLower(envChoice) == "prod" {
-		env = mpesa.EnvironmentProduction
-		fmt.Println(">> Running in PRODUCTION mode")
-	} else {
-		fmt.Println(">> Running in SANDBOX mode")
+	var envMap map[string]string
+	if *envFileFlag != "" {
+		loaded, err := loadDotEnv(*envFileFlag)
+		if err != nil {
+			if !os.IsNotExist(err) || *envFileFlag != ".env" {
+				log.Printf("[Warning] Could not load env file %s: %v\n", *envFileFlag, err)
+			}
+		} else {
+			envMap = loaded
+			fmt.Printf(">> Successfully loaded environment from: %s\n", *envFileFlag)
+		}
 	}
 
-	consumerKey := getEnvOrPrompt(reader, "MPESA_CONSUMER_KEY", "", "Daraja Consumer Key")
-	consumerSecret := getEnvOrPrompt(reader, "MPESA_CONSUMER_SECRET", "", "Daraja Consumer Secret")
-	passkey := getEnvOrPrompt(reader, "MPESA_PASSKEY", "", "Online Passkey")
+	rawEnv := getVal("", envMap, "DARAJA_ENV", "MPESA_ENV")
+	var env mpesa.Environment = mpesa.EnvironmentSandbox
+	if strings.ToLower(rawEnv) == "production" || strings.ToLower(rawEnv) == "prod" {
+		env = mpesa.EnvironmentProduction
+		fmt.Println(">> Target Environment: PRODUCTION (Live M-Pesa)")
+	} else {
+		fmt.Println(">> Target Environment: SANDBOX (Test Mode)")
+	}
 
-	fmt.Println()
-	fmt.Println("Note for Buy Goods (Till):")
-	fmt.Println("- 'Store / Head Office ShortCode' is the shortcode assigned to your Daraja App.")
-	fmt.Println("- 'Till Number' is your actual customer-facing Till Number (PartyB).")
-	fmt.Println("- If unsure or in sandbox, both may be the same number.")
-	fmt.Println()
+	consumerKey := getVal("", envMap, "DARAJA_CONSUMER_KEY", "MPESA_CONSUMER_KEY")
+	consumerSecret := getVal("", envMap, "DARAJA_CONSUMER_SECRET", "MPESA_CONSUMER_SECRET")
+	passkey := getVal("", envMap, "DARAJA_PASSKEY", "MPESA_PASSKEY")
+	shortcodeStr := getVal("", envMap, "DARAJA_SHORTCODE", "MPESA_STORE_NUMBER")
+	tillStr := getVal("", envMap, "DARAJA_TILL_NUMBER", "MPESA_TILL_NUMBER")
+	callbackURL := getVal("", envMap, "DARAJA_CALLBACK_URL", "MPESA_CALLBACK_URL")
 
-	storeNumberStr := getEnvOrPrompt(reader, "MPESA_STORE_NUMBER", "", "Store Number / Business ShortCode")
-	tillNumberStr := getEnvOrPrompt(reader, "MPESA_TILL_NUMBER", storeNumberStr, "Till Number (PartyB)")
-	phoneStr := getEnvOrPrompt(reader, "MPESA_PHONE_NUMBER", "254700000000", "Phone Number to prompt (format: 2547XXXXXXXX)")
-	amountStr := getEnvOrPrompt(reader, "MPESA_AMOUNT", "1", "Amount in KES")
-	callbackURL := getEnvOrPrompt(reader, "MPESA_CALLBACK_URL", "https://webhook.site/test", "Callback URL (https)")
+	if consumerKey == "" || consumerSecret == "" {
+		log.Fatalf("Error: Consumer Key and Consumer Secret are required (set in %s or environment)", *envFileFlag)
+	}
+	if passkey == "" {
+		log.Fatalf("Error: Passkey is required for STK Push (set in %s or environment)", *envFileFlag)
+	}
+	if shortcodeStr == "" {
+		log.Fatalf("Error: Shortcode (Store / Business Shortcode) is required (set in %s or environment)", *envFileFlag)
+	}
 
-	storeShortCode := parseUint(storeNumberStr)
-	tillNumber := parseUint(tillNumberStr)
-	phoneNumber := parseUint64(phoneStr)
-	amount := parseUint(amountStr)
+	// Default till to shortcode if not specified
+	if tillStr == "" {
+		tillStr = shortcodeStr
+	}
 
-	// Initialize the client
+	storeShortcode, err := strconv.ParseUint(shortcodeStr, 10, 64)
+	if err != nil {
+		log.Fatalf("Error: Invalid shortcode %q: %v", shortcodeStr, err)
+	}
+
+	tillNumber, err := strconv.ParseUint(tillStr, 10, 64)
+	if err != nil {
+		log.Fatalf("Error: Invalid till number %q: %v", tillStr, err)
+	}
+
+	// Phone Number handling
+	phoneInput := *phoneFlag
+	if phoneInput == "" {
+		phoneInput = getVal("", envMap, "DARAJA_PHONE", "MPESA_PHONE")
+	}
+
+	if phoneInput == "" {
+		fmt.Print("\nEnter Phone Number to prompt (e.g. 0712345678 or 254712345678): ")
+		reader := bufio.NewReader(os.Stdin)
+		input, _ := reader.ReadString('\n')
+		phoneInput = strings.TrimSpace(input)
+	}
+
+	if phoneInput == "" {
+		log.Fatalf("Error: Phone number is required. Pass --phone <number>")
+	}
+
+	// Normalize phone number to standard 254XXXXXXXXX
+	normalizedPhoneStr, err := mpesa.NormalizePhoneNumber(phoneInput)
+	if err != nil {
+		log.Fatalf("Phone normalization error: %v", err)
+	}
+	phoneUint64, _ := strconv.ParseUint(normalizedPhoneStr, 10, 64)
+
+	fmt.Println("\n--- Configuration Summary ---")
+	fmt.Printf("Store Shortcode (BusinessShortCode): %d\n", storeShortcode)
+	fmt.Printf("Till Number (PartyB):                %d\n", tillNumber)
+	fmt.Printf("Input Phone:                         %s\n", phoneInput)
+	fmt.Printf("Normalized Phone (PartyA):           %s\n", normalizedPhoneStr)
+	fmt.Printf("Amount:                              KES %d\n", *amountFlag)
+	fmt.Printf("Callback URL:                        %s\n", callbackURL)
+	fmt.Println("-----------------------------")
+
+	// Initialize the Mpesa client
 	client := mpesa.NewApp(http.DefaultClient, consumerKey, consumerSecret, env)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
-	fmt.Println("\n1. Testing OAuth 2.0 Access Token Generation...")
+	fmt.Println("\n[1/3] Authenticating with Safaricom Daraja OAuth 2.0...")
 	token, err := client.GenerateAccessToken(ctx)
-	if err != nil {
-		log.Fatalf("Authentication failed: %v", err)
-	}
-	fmt.Printf(">> Access Token successfully generated (Length: %d chars)\n", len(token))
-
-	fmt.Println("\n2. Sending STK Push to Till...")
-	stkReq := mpesa.STKPushRequest{
-		BusinessShortCode: storeShortCode,
-		TransactionType:   mpesa.CustomerBuyGoodsOnlineTransactionType, // "CustomerBuyGoodsOnline" for Till
-		Amount:            amount,
-		PartyA:            uint(phoneNumber),
-		PartyB:            tillNumber,
-		PhoneNumber:       phoneNumber,
-		CallBackURL:       callbackURL,
-		AccountReference:  "TillPaymentTest",
-		TransactionDesc:   "Testing Buy Goods Till",
-	}
-
-	resp, err := client.STKPush(ctx, passkey, stkReq)
 	if err != nil {
 		var apiErr *mpesa.APIError
 		if errors.As(err, &apiErr) {
-			log.Fatalf(">> Daraja API Error [HTTP %d]: Code=%s, RequestID=%s, Message=%s\n",
-				apiErr.StatusCode, apiErr.ErrorCode, apiErr.RequestID, apiErr.ErrorMessage)
+			log.Fatalf("OAuth Error: status=%d, code=%s, msg=%s", apiErr.StatusCode, apiErr.ErrorCode, apiErr.ErrorMessage)
 		}
-		log.Fatalf(">> STK Push Error: %v\n", err)
+		log.Fatalf("OAuth Error: %v", err)
+	}
+	fmt.Printf(">> Access Token successfully generated (Length: %d chars)\n", len(token))
+
+	fmt.Println("\n[2/3] Initiating Lipa Na M-Pesa Online (Buy Goods STK Push)...")
+	stkReq := mpesa.STKPushRequest{
+		BusinessShortCode: uint(storeShortcode),
+		TransactionType:   mpesa.CustomerBuyGoodsOnlineTransactionType, // "CustomerBuyGoodsOnline"
+		Amount:            *amountFlag,
+		PartyA:            uint(phoneUint64),
+		PartyB:            uint(tillNumber),
+		PhoneNumber:       phoneUint64,
+		CallBackURL:       callbackURL,
+		AccountReference:  "TillTest",
+		TransactionDesc:   "Testing Buy Goods Till",
 	}
 
-	fmt.Println(">> STK Push Sent Successfully!")
-	fmt.Printf("   Response Code: %s\n", resp.ResponseCode)
-	fmt.Printf("   Response Description: %s\n", resp.ResponseDescription)
-	fmt.Printf("   Checkout Request ID: %s\n", resp.CheckoutRequestID)
-	fmt.Printf("   Customer Message: %s\n", resp.CustomerMessage)
+	stkResp, err := client.STKPush(ctx, passkey, stkReq)
+	if err != nil {
+		var apiErr *mpesa.APIError
+		if errors.As(err, &apiErr) {
+			log.Fatalf("\n>> Daraja STK Push Error [HTTP %d]:\n   Error Code: %s\n   Request ID: %s\n   Message: %s\n",
+				apiErr.StatusCode, apiErr.ErrorCode, apiErr.RequestID, apiErr.ErrorMessage)
+		}
+		log.Fatalf("STK Push failed: %v", err)
+	}
 
-	fmt.Println("\n3. Waiting 10 seconds before querying transaction status...")
+	fmt.Println("\n>> SUCCESS: STK Push sent to phone!")
+	fmt.Printf("   Response Code:        %s\n", stkResp.ResponseCode)
+	fmt.Printf("   Response Description: %s\n", stkResp.ResponseDescription)
+	fmt.Printf("   Merchant Request ID:  %s\n", stkResp.MerchantRequestID)
+	fmt.Printf("   Checkout Request ID:  %s\n", stkResp.CheckoutRequestID)
+	fmt.Printf("   Customer Message:     %s\n", stkResp.CustomerMessage)
+
+	fmt.Println("\n>> Please check the phone screen for the M-Pesa PIN prompt!")
+	fmt.Println("\n[3/3] Waiting 10 seconds before polling transaction status...")
 	time.Sleep(10 * time.Second)
 
-	fmt.Println("4. Querying STK Push status...")
+	fmt.Println(">> Querying STK Push status via STKQuery...")
 	queryResp, err := client.STKQuery(ctx, passkey, mpesa.STKQueryRequest{
-		BusinessShortCode: storeShortCode,
-		CheckoutRequestID: resp.CheckoutRequestID,
+		BusinessShortCode: uint(storeShortcode),
+		CheckoutRequestID: stkResp.CheckoutRequestID,
 	})
 	if err != nil {
 		var apiErr *mpesa.APIError
 		if errors.As(err, &apiErr) {
-			log.Printf(">> Query API Error [HTTP %d]: Code=%s, Message=%s\n",
+			log.Printf("Query Response [HTTP %d]: Code=%s, Message=%s\n",
 				apiErr.StatusCode, apiErr.ErrorCode, apiErr.ErrorMessage)
 		} else {
-			log.Printf(">> Query Error: %v\n", err)
+			log.Printf("Query error: %v\n", err)
 		}
 	} else {
-		fmt.Printf(">> Query Result: Code=%s, Desc=%s\n",
+		fmt.Printf(">> Query Status: ResponseCode=%s, Description=%s\n",
 			queryResp.ResponseCode, queryResp.ResponseDescription)
 	}
 
-	fmt.Println("\nTest Complete! Check your phone for the M-Pesa prompt, or check your callback URL for the webhook.")
+	fmt.Println("\nDone! Full callback will be delivered to:", callbackURL)
 }

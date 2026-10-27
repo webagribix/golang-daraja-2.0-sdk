@@ -1664,3 +1664,38 @@ func TestMpesa_APIError(t *testing.T) {
 	require.Equal(t, "Bad Request - Invalid BusinessShortCode", apiErr.ErrorMessage)
 	require.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
 }
+
+func TestNormalizePhoneNumber(t *testing.T) {
+	testCases := []struct {
+		input       string
+		expected    string
+		expectError bool
+	}{
+		{input: "0712345678", expected: "254712345678"},
+		{input: "0112345678", expected: "254112345678"},
+		{input: "+254712345678", expected: "254712345678"},
+		{input: "+254 712 345 678", expected: "254712345678"},
+		{input: "254712345678", expected: "254712345678"},
+		{input: "712345678", expected: "254712345678"},
+		{input: "112345678", expected: "254112345678"},
+		{input: "071234", expectError: true},
+		{input: "12345", expectError: true},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.input, func(t *testing.T) {
+			res, err := NormalizePhoneNumber(tc.input)
+			if tc.expectError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tc.expected, res)
+
+				u64, err := NormalizePhoneNumberUint64(tc.input)
+				require.NoError(t, err)
+				expectedU64, _ := strconv.ParseUint(tc.expected, 10, 64)
+				require.Equal(t, expectedU64, u64)
+			}
+		})
+	}
+}
