@@ -76,13 +76,14 @@ var certFS embed.FS
 
 // Mpesa is an app to make a transaction
 type Mpesa struct {
-	client      HttpClient
-	environment Environment
-	mu          sync.Mutex
-	cache       cache
-
+	client         HttpClient
+	environment    Environment
+	mu             sync.Mutex
+	cache          cache
 	consumerKey    string
 	consumerSecret string
+	passkey        string
+	initiatorPwd   string
 	customCert     []byte
 }
 
@@ -139,6 +140,82 @@ func NormalizePhoneNumberUint64(phone string) (uint64, error) {
 		return 0, err
 	}
 	return strconv.ParseUint(normalized, 10, 64)
+}
+
+// Config holds configuration options for initializing the Daraja SDK client.
+type Config struct {
+	// ConsumerKey is the Daraja App Consumer Key (Required)
+	ConsumerKey string
+
+	// ConsumerSecret is the Daraja App Consumer Secret (Required)
+	ConsumerSecret string
+
+	// Passkey is the Lipa Na M-Pesa Online passkey (Optional default for STK Push and STK Query)
+	Passkey string
+
+	// InitiatorPassword is the password for B2C/Balance/Reversals (Optional default)
+	InitiatorPassword string
+
+	// Environment is either EnvironmentSandbox (default) or EnvironmentProduction
+	Environment Environment
+
+	// HTTPClient is an optional custom HTTP client
+	HTTPClient HttpClient
+
+	// CertificatePEM is an optional custom Safaricom public certificate in PEM format
+	CertificatePEM []byte
+
+	// CertificateFile is an optional path to a .cer / .pem certificate file
+	CertificateFile string
+}
+
+// New creates and initializes a new M-Pesa Daraja client using the provided Config struct.
+func New(cfg Config) (*Mpesa, error) {
+	if cfg.ConsumerKey == "" || cfg.ConsumerSecret == "" {
+		return nil, errors.New("mpesa: ConsumerKey and ConsumerSecret are required in Config")
+	}
+
+	c := cfg.HTTPClient
+	if c == nil {
+		c = &http.Client{
+			Timeout: 20 * time.Second,
+		}
+	}
+
+	app := &Mpesa{
+		client:         c,
+		environment:    cfg.Environment,
+		cache:          make(cache),
+		consumerKey:    cfg.ConsumerKey,
+		consumerSecret: cfg.ConsumerSecret,
+		passkey:        cfg.Passkey,
+		initiatorPwd:   cfg.InitiatorPassword,
+		customCert:     cfg.CertificatePEM,
+	}
+
+	if cfg.CertificateFile != "" {
+		if err := app.WithCertificateFile(cfg.CertificateFile); err != nil {
+			return nil, err
+		}
+	}
+
+	return app, nil
+}
+
+// WithPasskey sets a default passkey for STK Push and STK Query operations.
+func (m *Mpesa) WithPasskey(passkey string) *Mpesa {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.passkey = passkey
+	return m
+}
+
+// WithInitiatorPassword sets a default initiator password for B2C, Balance, and Reversal operations.
+func (m *Mpesa) WithInitiatorPassword(pwd string) *Mpesa {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.initiatorPwd = pwd
+	return m
 }
 
 // NewApp initializes a new Mpesa app that will be used to perform C2B or B2C transactions.
@@ -319,7 +396,11 @@ func (m *Mpesa) GenerateAccessToken(ctx context.Context) (string, error) {
 }
 
 // STKPush initiates online payment on behalf of a customer using STKPush.
+// If passkey is empty, the default passkey from Config or WithPasskey is used.
 func (m *Mpesa) STKPush(ctx context.Context, passkey string, req STKPushRequest) (*Response, error) {
+	if passkey == "" {
+		passkey = m.passkey
+	}
 	if passkey == "" {
 		return nil, ErrInvalidPasskey
 	}
@@ -398,6 +479,9 @@ func (m *Mpesa) generateSecurityCredentials(initiatorPwd string) (string, error)
 // B2C transacts between an M-Pesa short code to a phone number registered on M-Pesa
 func (m *Mpesa) B2C(ctx context.Context, initiatorPwd string, req B2CRequest) (*Response, error) {
 	if initiatorPwd == "" {
+		initiatorPwd = m.initiatorPwd
+	}
+	if initiatorPwd == "" {
 		return nil, ErrInvalidInitiatorPassword
 	}
 
@@ -430,7 +514,11 @@ func UnmarshalCallback(r io.Reader) (*Callback, error) {
 }
 
 // STKQuery checks the status of an STKPush payment.
+// If passkey is empty, the default passkey from Config or WithPasskey is used.
 func (m *Mpesa) STKQuery(ctx context.Context, passkey string, req STKQueryRequest) (*Response, error) {
+	if passkey == "" {
+		passkey = m.passkey
+	}
 	if passkey == "" {
 		return nil, ErrInvalidPasskey
 	}
@@ -441,11 +529,59 @@ func (m *Mpesa) STKQuery(ctx context.Context, passkey string, req STKQueryReques
 	if err != nil {
 		return nil, err
 	}
-
-	//goland:noinspection GoUnhandledErrorResult
 	defer res.Body.Close()
 
 	return decodeResponse(res)
+}
+
+// PollSTKStatus polls Safaricom Daraja STK Query until the user enters their PIN, cancels, or the timeout expires.
+// Default timeout is 45s, default interval is 3s. If passkey is empty, the default passkey from Config is used.
+func (m *Mpesa) PollSTKStatus(ctx context.Context, passkey string, shortcode uint, checkoutRequestID string, timeout, interval time.Duration) (*Response, error) {
+	if passkey == "" {
+		passkey = m.passkey
+	}
+	if passkey == "" {
+		return nil, ErrInvalidPasskey
+	}
+	if timeout <= 0 {
+		timeout = 45 * time.Second
+	}
+	if interval <= 0 {
+		interval = 3 * time.Second
+	}
+
+	pollCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-pollCtx.Done():
+			return nil, fmt.Errorf("mpesa: timeout polling STK status for CheckoutRequestID %s: %w", checkoutRequestID, pollCtx.Err())
+		case <-ticker.C:
+			res, err := m.STKQuery(pollCtx, passkey, STKQueryRequest{
+				BusinessShortCode: shortcode,
+				CheckoutRequestID: checkoutRequestID,
+			})
+			if err != nil {
+				var apiErr *APIError
+				if errors.As(err, &apiErr) {
+					// 500.001.1001 indicates "The transaction is being processed", continue polling
+					if apiErr.ErrorCode == "500.001.1001" || strings.Contains(strings.ToLower(apiErr.ErrorMessage), "being processed") {
+						continue
+					}
+				}
+				continue
+			}
+
+			// When ResultCode is present, Safaricom has completed processing!
+			if res.ResultCode != "" {
+				return res, nil
+			}
+		}
+	}
 }
 
 // RegisterC2BURL API works hand in hand with Customer to Business (C2B) APIs and allows receiving payment notifications to your paybill.
@@ -545,6 +681,9 @@ func (m *Mpesa) GetTransactionStatus(
 	ctx context.Context, initiatorPwd string, req TransactionStatusRequest,
 ) (*Response, error) {
 	if initiatorPwd == "" {
+		initiatorPwd = m.initiatorPwd
+	}
+	if initiatorPwd == "" {
 		return nil, ErrInvalidInitiatorPassword
 	}
 
@@ -581,6 +720,9 @@ func (m *Mpesa) GetTransactionStatus(
 func (m *Mpesa) GetAccountBalance(
 	ctx context.Context, initiatorPwd string, req AccountBalanceRequest,
 ) (*Response, error) {
+	if initiatorPwd == "" {
+		initiatorPwd = m.initiatorPwd
+	}
 	if initiatorPwd == "" {
 		return nil, ErrInvalidInitiatorPassword
 	}
@@ -619,6 +761,9 @@ func (m *Mpesa) GetAccountBalance(
 // The transaction moves money from your MMF/Working account to the recipient’s utility account.
 func (m *Mpesa) BusinessPayBill(ctx context.Context, initiatorPwd string, req BusinessPayBillRequest) (*Response, error) {
 	if initiatorPwd == "" {
+		initiatorPwd = m.initiatorPwd
+	}
+	if initiatorPwd == "" {
 		return nil, ErrInvalidInitiatorPassword
 	}
 
@@ -654,6 +799,9 @@ func (m *Mpesa) BusinessPayBill(ctx context.Context, initiatorPwd string, req Bu
 // Reversal requests a reversal of an M-Pesa transaction.
 func (m *Mpesa) Reversal(ctx context.Context, initiatorPwd string, req ReversalRequest) (*Response, error) {
 	if initiatorPwd == "" {
+		initiatorPwd = m.initiatorPwd
+	}
+	if initiatorPwd == "" {
 		return nil, ErrInvalidInitiatorPassword
 	}
 
@@ -688,6 +836,9 @@ func (m *Mpesa) Reversal(ctx context.Context, initiatorPwd string, req ReversalR
 // TaxRemittance enables businesses to remit tax directly to the Kenya Revenue Authority (KRA).
 func (m *Mpesa) TaxRemittance(ctx context.Context, initiatorPwd string, req TaxRemittanceRequest) (*Response, error) {
 	if initiatorPwd == "" {
+		initiatorPwd = m.initiatorPwd
+	}
+	if initiatorPwd == "" {
 		return nil, ErrInvalidInitiatorPassword
 	}
 
@@ -720,6 +871,9 @@ func (m *Mpesa) TaxRemittance(ctx context.Context, initiatorPwd string, req TaxR
 
 // BusinessBuyGoods enables a business to pay directly from its account to a Merchant Buy Goods till (B2B).
 func (m *Mpesa) BusinessBuyGoods(ctx context.Context, initiatorPwd string, req BusinessBuyGoodsRequest) (*Response, error) {
+	if initiatorPwd == "" {
+		initiatorPwd = m.initiatorPwd
+	}
 	if initiatorPwd == "" {
 		return nil, ErrInvalidInitiatorPassword
 	}

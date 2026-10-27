@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -108,7 +107,6 @@ func main() {
 		log.Fatalf("Error: Shortcode (Store / Business Shortcode) is required (set in %s or environment)", *envFileFlag)
 	}
 
-	// Default till to shortcode if not specified
 	if tillStr == "" {
 		tillStr = shortcodeStr
 	}
@@ -123,7 +121,6 @@ func main() {
 		log.Fatalf("Error: Invalid till number %q: %v", tillStr, err)
 	}
 
-	// Phone Number handling
 	phoneInput := *phoneFlag
 	if phoneInput == "" {
 		phoneInput = getVal("", envMap, "DARAJA_PHONE", "MPESA_PHONE")
@@ -156,10 +153,18 @@ func main() {
 	fmt.Printf("Callback URL:                        %s\n", callbackURL)
 	fmt.Println("-----------------------------")
 
-	// Initialize the Mpesa client
-	client := mpesa.NewApp(http.DefaultClient, consumerKey, consumerSecret, env)
+	// Initialize the M-Pesa client using AWS-style Config
+	client, err := mpesa.New(mpesa.Config{
+		ConsumerKey:    consumerKey,
+		ConsumerSecret: consumerSecret,
+		Passkey:        passkey,
+		Environment:    env,
+	})
+	if err != nil {
+		log.Fatalf("Failed to initialize Daraja client: %v", err)
+	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Second)
 	defer cancel()
 
 	fmt.Println("\n[1/3] Authenticating with Safaricom Daraja OAuth 2.0...")
@@ -176,7 +181,7 @@ func main() {
 	fmt.Println("\n[2/3] Initiating Lipa Na M-Pesa Online (Buy Goods STK Push)...")
 	stkReq := mpesa.STKPushRequest{
 		BusinessShortCode: uint(storeShortcode),
-		TransactionType:   mpesa.CustomerBuyGoodsOnlineTransactionType, // "CustomerBuyGoodsOnline"
+		TransactionType:   mpesa.CustomerBuyGoodsOnlineTransactionType,
 		Amount:            *amountFlag,
 		PartyA:            uint(phoneUint64),
 		PartyB:            uint(tillNumber),
@@ -186,7 +191,8 @@ func main() {
 		TransactionDesc:   "Testing Buy Goods Till",
 	}
 
-	stkResp, err := client.STKPush(ctx, passkey, stkReq)
+	// Passkey automatically inferred from client Config
+	stkResp, err := client.STKPush(ctx, "", stkReq)
 	if err != nil {
 		var apiErr *mpesa.APIError
 		if errors.As(err, &apiErr) {
@@ -203,27 +209,25 @@ func main() {
 	fmt.Printf("   Checkout Request ID:  %s\n", stkResp.CheckoutRequestID)
 	fmt.Printf("   Customer Message:     %s\n", stkResp.CustomerMessage)
 
-	fmt.Println("\n>> Please check the phone screen for the M-Pesa PIN prompt!")
-	fmt.Println("\n[3/3] Waiting 10 seconds before polling transaction status...")
-	time.Sleep(10 * time.Second)
+	fmt.Println("\n>> Please check your phone now! Enter M-Pesa PIN or Cancel to see real-time status:")
+	fmt.Println("[3/3] Polling transaction outcome in real-time (up to 45s)...")
 
-	fmt.Println(">> Querying STK Push status via STKQuery...")
-	queryResp, err := client.STKQuery(ctx, passkey, mpesa.STKQueryRequest{
-		BusinessShortCode: uint(storeShortcode),
-		CheckoutRequestID: stkResp.CheckoutRequestID,
-	})
+	pollResp, err := client.PollSTKStatus(ctx, "", uint(storeShortcode), stkResp.CheckoutRequestID, 45*time.Second, 3*time.Second)
 	if err != nil {
-		var apiErr *mpesa.APIError
-		if errors.As(err, &apiErr) {
-			log.Printf("Query Response [HTTP %d]: Code=%s, Message=%s\n",
-				apiErr.StatusCode, apiErr.ErrorCode, apiErr.ErrorMessage)
-		} else {
-			log.Printf("Query error: %v\n", err)
-		}
+		fmt.Printf(">> Poll ended: %v\n", err)
 	} else {
-		fmt.Printf(">> Query Status: ResponseCode=%s, Description=%s\n",
-			queryResp.ResponseCode, queryResp.ResponseDescription)
+		fmt.Println("\n==================================================")
+		fmt.Println("             REAL-TIME TRANSACTION RESULT         ")
+		fmt.Println("==================================================")
+		fmt.Printf("Result Code:        %s\n", pollResp.ResultCode)
+		fmt.Printf("Result Description: %s\n", pollResp.ResultDesc)
+		if pollResp.IsSuccessful() {
+			fmt.Println(">> Status: SUCCESSFUL PAYMENT! (Money Received)")
+		} else {
+			fmt.Printf(">> Status: FAILED / CANCELLED (%s)\n", pollResp.ResultDesc)
+		}
+		fmt.Println("==================================================")
 	}
 
-	fmt.Println("\nDone! Full callback will be delivered to:", callbackURL)
+	fmt.Println("\nWebhook notification will also be delivered to:", callbackURL)
 }

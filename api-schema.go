@@ -1,6 +1,9 @@
 package mpesa
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // DynamicQRTransactionType represents the supported transaction types for the Dynamic QR API
 type DynamicQRTransactionType string
@@ -239,6 +242,37 @@ type (
 		// Body is the root key for the entire callback message.
 		Body STKPushCallbackBody `json:"Body"`
 	}
+)
+
+// IsSuccessful returns true if the response indicates a successful transaction.
+func (r *Response) IsSuccessful() bool {
+	if r == nil {
+		return false
+	}
+	return r.ResultCode == "0" || (r.ResultCode == "" && r.ResponseCode == "0")
+}
+
+// IsSuccessful returns true if the STK callback indicates a successful payment (ResultCode == 0).
+func (c *STKCallback) IsSuccessful() bool {
+	return c != nil && c.ResultCode == 0
+}
+
+// ReceiptNumber returns the M-Pesa receipt number from the callback metadata if present.
+func (c *STKCallback) ReceiptNumber() string {
+	if c == nil {
+		return ""
+	}
+	for _, item := range c.CallbackMetadata.Item {
+		if strings.EqualFold(item.Name, "MpesaReceiptNumber") {
+			if s, ok := item.Value.(string); ok {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+type (
 
 	B2CRequest struct {
 		// InitiatorName is the username of the M-Pesa B2C account API operator. The access channel for this operator
