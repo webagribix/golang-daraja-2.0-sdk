@@ -384,15 +384,6 @@ func ParseSTKCallbackBytes(data []byte) (*STKCallback, error) {
 	return &payload.Body.STKCallback, nil
 }
 
-// UnmarshalSTKPushCallback decodes an STKPushCallback root payload from an io.Reader.
-func UnmarshalSTKPushCallback(r io.Reader) (*STKPushCallback, error) {
-	var payload STKPushCallback
-	if err := json.NewDecoder(r).Decode(&payload); err != nil {
-		return nil, fmt.Errorf("mpesa: failed to decode STK callback JSON: %w", err)
-	}
-	return &payload, nil
-}
-
 // B2CRequest represents the payload for initiating a Business-to-Consumer payment.
 type B2CRequest struct {
 	// InitiatorName is the username of the M-Pesa B2C account API operator.
