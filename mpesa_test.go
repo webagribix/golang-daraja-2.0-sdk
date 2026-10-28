@@ -1788,3 +1788,33 @@ func TestMpesa_STKPushBuyGoods(t *testing.T) {
 	require.NotNil(t, resp)
 	require.Equal(t, "0", resp.ResponseCode)
 }
+
+func TestMpesa_STKPushQueryAlias(t *testing.T) {
+	ctx := context.Background()
+	cl := newMockHttpClient()
+	app := NewApp(cl, testConsumerKey, testConsumerSecret, EnvironmentSandbox)
+	app.WithPasskey("testpasskey")
+
+	cl.MockRequest(app.endpointAuth(), func() (status int, body string) {
+		return http.StatusOK, `{"access_token": "token123", "expires_in": "3599"}`
+	})
+
+	cl.MockRequest(app.endpointSTKQuery(), func() (status int, body string) {
+		return http.StatusOK, `{
+			"ResponseCode": "0",
+			"MerchantRequestID": "8773-65037085-1",
+			"CheckoutRequestID": "ws_CO_03082022131319635708374149",
+			"ResultCode": "0",
+			"ResultDesc": "The service request is processed successfully.",
+			"CustomerMessage": "The service request is processed successfully."
+		}`
+	})
+
+	resp, err := app.STKPushQuery(ctx, "testpasskey", STKQueryRequest{
+		BusinessShortCode: 174379,
+		CheckoutRequestID: "ws_CO_03082022131319635708374149",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, "0", resp.ResultCode)
+}

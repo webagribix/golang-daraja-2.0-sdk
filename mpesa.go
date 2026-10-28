@@ -590,6 +590,12 @@ func (m *Mpesa) STKQuery(ctx context.Context, passkey string, req STKQueryReques
 	return decodeResponse(res)
 }
 
+// STKPushQuery is an alias for STKQuery, checking the status of an ongoing or completed STK Push payment.
+// It matches Safaricom Daraja's endpoint naming conventions (/mpesa/stkpushquery/v1/query).
+func (m *Mpesa) STKPushQuery(ctx context.Context, passkey string, req STKQueryRequest) (*Response, error) {
+	return m.STKQuery(ctx, passkey, req)
+}
+
 // PollSTKStatus polls Safaricom Daraja STK Query until the user enters their PIN, cancels, or the timeout expires.
 // Default timeout is 45s, default interval is 3s. If passkey is empty, the default passkey from Config is used.
 func (m *Mpesa) PollSTKStatus(ctx context.Context, passkey string, shortcode uint, checkoutRequestID string, timeout, interval time.Duration) (*Response, error) {
