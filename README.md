@@ -70,22 +70,20 @@ func main() {
 	}
 
 	// 2. Normalize customer phone number (accepts 07..., 01..., +254...)
-	phone, err := mpesa.NormalizePhoneNumberUint64("0759345391")
+	phone, err := mpesa.NormalizePhoneNumberUint64("0712345678")
 	if err != nil {
 		log.Fatalf("invalid phone: %v", err)
 	}
 
 	// 3. Send STK Push prompt (Buy Goods Till example)
-	stkResp, err := client.STKPush(ctx, "", mpesa.STKPushRequest{
-		BusinessShortCode: 7372538,                             // Store Number
-		TransactionType:   mpesa.CustomerBuyGoodsOnlineTransactionType, // For Till Number
-		Amount:            1,
-		PartyA:            uint(phone),
-		PartyB:            3325969,                             // Till Number
-		PhoneNumber:       phone,
-		CallBackURL:       "https://yourdomain.com/api/callbacks/mpesa",
-		AccountReference:  "Order-1049",
-		TransactionDesc:   "Payment for Order #1049",
+	stkResp, err := client.STKPushBuyGoods(ctx, mpesa.STKBuyGoodsRequest{
+		StoreShortCode:   600000, // Store / Head Office Number
+		TillNumber:       800000, // Till Number customer sees
+		PhoneNumber:      phone,
+		Amount:           1,
+		CallBackURL:      "https://yourdomain.com/api/callbacks/mpesa",
+		AccountReference: "Order-1049",
+		TransactionDesc:  "Payment for Order #1049",
 	})
 	if err != nil {
 		log.Fatalf("STK Push error: %v", err)
@@ -94,7 +92,7 @@ func main() {
 	fmt.Printf("STK Prompt sent! CheckoutID: %s\n", stkResp.CheckoutRequestID)
 
 	// 4. Real-time Outcome Polling (Polls up to 45s while user enters PIN)
-	result, err := client.PollSTKStatus(ctx, "", 7372538, stkResp.CheckoutRequestID, 45*time.Second, 3*time.Second)
+	result, err := client.PollSTKStatus(ctx, "", 600000, stkResp.CheckoutRequestID, 45*time.Second, 3*time.Second)
 	if err != nil {
 		log.Fatalf("Polling error: %v", err)
 	}
@@ -113,11 +111,36 @@ func main() {
 
 ### 1. PayBill vs Buy Goods (Till Number)
 
-| Parameter | PayBill Payment | Buy Goods (Till Number) |
+The SDK provides dedicated, confusion-free helper methods for both payment types:
+
+#### Buy Goods (Till Number):
+```go
+resp, err := client.STKPushBuyGoods(ctx, mpesa.STKBuyGoodsRequest{
+	StoreShortCode:   600000, // Head Office / Store shortcode linked to Daraja App
+	TillNumber:       800000, // Store / Till Number
+	PhoneNumber:      phone,
+	Amount:           10,
+	CallBackURL:      "https://yourdomain.com/api/callbacks/mpesa",
+	AccountReference: "Order-1049",
+})
+```
+
+#### PayBill:
+```go
+resp, err := client.STKPushPaybill(ctx, mpesa.STKPaybillRequest{
+	PaybillNumber:    174379, // Your Paybill Shortcode
+	PhoneNumber:      phone,
+	Amount:           100,
+	CallBackURL:      "https://yourdomain.com/api/callbacks/mpesa",
+	AccountReference: "INV-9921",
+})
+```
+
+| Parameter | PayBill Payment (`STKPushPaybill`) | Buy Goods (`STKPushBuyGoods`) |
 |---|---|---|
-| `TransactionType` | `mpesa.CustomerPayBillOnlineTransactionType` | `mpesa.CustomerBuyGoodsOnlineTransactionType` |
-| `BusinessShortCode` | PayBill Number (e.g. `174379`) | Store Number / Head Office Shortcode |
-| `PartyB` | PayBill Number | Customer-facing Till Number |
+| `TransactionType` | `CustomerPayBillOnline` (automatic) | `CustomerBuyGoodsOnline` (automatic) |
+| `BusinessShortCode` | `PaybillNumber` | `StoreShortCode` (Store / HO) |
+| `PartyB` | `PaybillNumber` | `TillNumber` |
 | `AccountReference` | Account / Invoice Number | Till Name or Reference |
 
 ---
@@ -173,7 +196,7 @@ resp, err := client.B2C(ctx, "", mpesa.B2CRequest{
 	CommandID:       mpesa.BusinessPaymentCommandID, // or SalaryPaymentCommandID, PromotionPaymentCommandID
 	Amount:          500,
 	PartyA:          600000,
-	PartyB:          254759345391,
+	PartyB:          254708374149,
 	Remarks:         "Refund for order #982",
 	QueueTimeOutURL: "https://yourdomain.com/callbacks/timeout",
 	ResultURL:       "https://yourdomain.com/callbacks/b2c",
@@ -262,7 +285,7 @@ if err != nil {
 An interactive testing runner for Till Numbers and PayBills is provided in `examples/till`:
 
 ```bash
-go run ./examples/till/main.go --env .env --phone 0759345391 --amount 1
+go run ./examples/till/main.go --env .env --phone 0712345678 --amount 1
 ```
 
 ---

@@ -170,7 +170,7 @@ func TestMpesa_STKPush(t *testing.T) {
 					err := json.NewDecoder(req.Body).Decode(&reqParams)
 					require.NoError(t, err)
 
-					timestamp := time.Now().Format("20060102150405")
+					timestamp := time.Now().In(nairobiLocation).Format("20060102150405")
 					wantPassword := fmt.Sprintf("%d%s%s", stkReq.BusinessShortCode, passkey, timestamp)
 
 					gotPassword := make([]byte, base64.StdEncoding.DecodedLen(len(reqParams.Password)))
@@ -650,7 +650,7 @@ func TestMpesa_STKPushQuery(t *testing.T) {
 					err := json.NewDecoder(req.Body).Decode(&reqParams)
 					require.NoError(t, err)
 
-					timestamp := time.Now().Format("20060102150405")
+					timestamp := time.Now().In(nairobiLocation).Format("20060102150405")
 					wantPassword := fmt.Sprintf("%d%s%s", stkReq.BusinessShortCode, passkey, timestamp)
 
 					gotPassword := make([]byte, base64.StdEncoding.DecodedLen(len(reqParams.Password)))
@@ -1699,4 +1699,92 @@ func TestNormalizePhoneNumber(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMpesa_STKPush_JSONStringSerialization(t *testing.T) {
+	req := STKPushRequest{
+		BusinessShortCode: 600000,
+		TransactionType:   CustomerBuyGoodsOnlineTransactionType,
+		Amount:            10,
+		PartyA:            254708374149,
+		PartyB:            800000,
+		PhoneNumber:       254708374149,
+		CallBackURL:       "https://example.com/callback",
+		AccountReference:  "TillTest",
+		TransactionDesc:   "Test Description",
+	}
+
+	data, err := json.Marshal(req)
+	require.NoError(t, err)
+
+	jsonStr := string(data)
+	require.Contains(t, jsonStr, `"BusinessShortCode":"600000"`)
+	require.Contains(t, jsonStr, `"Amount":"10"`)
+	require.Contains(t, jsonStr, `"PartyA":"254708374149"`)
+	require.Contains(t, jsonStr, `"PartyB":"800000"`)
+	require.Contains(t, jsonStr, `"PhoneNumber":"254708374149"`)
+}
+
+func TestMpesa_STKPushPaybill(t *testing.T) {
+	ctx := context.Background()
+	cl := newMockHttpClient()
+	app := NewApp(cl, testConsumerKey, testConsumerSecret, EnvironmentSandbox)
+	app.WithPasskey("testpasskey")
+
+	cl.MockRequest(app.endpointAuth(), func() (status int, body string) {
+		return http.StatusOK, `{"access_token": "token123", "expires_in": "3599"}`
+	})
+
+	cl.MockRequest(app.endpointSTK(), func() (status int, body string) {
+		return http.StatusOK, `{
+			"MerchantRequestID": "29115-34620561-1",
+			"CheckoutRequestID": "ws_CO_191220191020363925",
+			"ResponseCode": "0",
+			"ResponseDescription": "Success. Request accepted for processing",
+			"CustomerMessage": "Success. Request accepted for processing"
+		}`
+	})
+
+	resp, err := app.STKPushPaybill(ctx, STKPaybillRequest{
+		PaybillNumber:    174379,
+		PhoneNumber:      254708374149,
+		Amount:           100,
+		CallBackURL:      "https://example.com/callback",
+		AccountReference: "INV001",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, "0", resp.ResponseCode)
+}
+
+func TestMpesa_STKPushBuyGoods(t *testing.T) {
+	ctx := context.Background()
+	cl := newMockHttpClient()
+	app := NewApp(cl, testConsumerKey, testConsumerSecret, EnvironmentSandbox)
+	app.WithPasskey("testpasskey")
+
+	cl.MockRequest(app.endpointAuth(), func() (status int, body string) {
+		return http.StatusOK, `{"access_token": "token123", "expires_in": "3599"}`
+	})
+
+	cl.MockRequest(app.endpointSTK(), func() (status int, body string) {
+		return http.StatusOK, `{
+			"MerchantRequestID": "29115-34620561-1",
+			"CheckoutRequestID": "ws_CO_191220191020363925",
+			"ResponseCode": "0",
+			"ResponseDescription": "Success. Request accepted for processing",
+			"CustomerMessage": "Success. Request accepted for processing"
+		}`
+	})
+
+	resp, err := app.STKPushBuyGoods(ctx, STKBuyGoodsRequest{
+		StoreShortCode: 600000,
+		TillNumber:     800000,
+		PhoneNumber:    254708374149,
+		Amount:         10,
+		CallBackURL:    "https://example.com/callback",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, "0", resp.ResponseCode)
 }

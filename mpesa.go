@@ -312,10 +312,19 @@ func (m *Mpesa) endpointTaxRemittance() string {
 	return m.Environment().BaseURL() + `/mpesa/b2b/v1/remittax`
 }
 
-// generateTimestampAndPassword returns the current timestamp in the format YYYYMMDDHHmmss and a base64 encoded
-// password in the format shortcode+passkey+timestamp
+// nairobiLocation holds the Africa/Nairobi timezone location (GMT+3) required by Safaricom Daraja.
+var nairobiLocation = func() *time.Location {
+	loc, err := time.LoadLocation("Africa/Nairobi")
+	if err != nil {
+		return time.FixedZone("EAT", 3*3600)
+	}
+	return loc
+}()
+
+// generateTimestampAndPassword returns the current timestamp in Africa/Nairobi time (format YYYYMMDDHHmmss)
+// and a base64 encoded password in the format shortcode+passkey+timestamp.
 func generateTimestampAndPassword(shortcode uint, passkey string) (string, string) {
-	timestamp := time.Now().Format("20060102150405")
+	timestamp := time.Now().In(nairobiLocation).Format("20060102150405")
 	password := fmt.Sprintf("%d%s%s", shortcode, passkey, timestamp)
 	return timestamp, base64.StdEncoding.EncodeToString([]byte(password))
 }
@@ -416,6 +425,54 @@ func (m *Mpesa) STKPush(ctx context.Context, passkey string, req STKPushRequest)
 	defer func() { _ = res.Body.Close() }()
 
 	return decodeResponse(res)
+}
+
+// STKPushPaybill initiates an STK Push payment specifically for a Paybill shortcode.
+// It automatically configures TransactionType to CustomerPayBillOnline and sets PartyB equal to PaybillNumber.
+func (m *Mpesa) STKPushPaybill(ctx context.Context, req STKPaybillRequest) (*Response, error) {
+	ref := req.AccountReference
+	if ref == "" {
+		ref = fmt.Sprintf("%d", req.PaybillNumber)
+	}
+	desc := req.TransactionDesc
+	if desc == "" {
+		desc = "Paybill Payment"
+	}
+	return m.STKPush(ctx, req.Passkey, STKPushRequest{
+		BusinessShortCode: req.PaybillNumber,
+		TransactionType:   CustomerPayBillOnlineTransactionType,
+		Amount:            req.Amount,
+		PartyA:            req.PhoneNumber,
+		PartyB:            req.PaybillNumber,
+		PhoneNumber:       req.PhoneNumber,
+		CallBackURL:       req.CallBackURL,
+		AccountReference:  ref,
+		TransactionDesc:   desc,
+	})
+}
+
+// STKPushBuyGoods initiates an STK Push payment specifically for a Buy Goods Till Number.
+// It automatically configures TransactionType to CustomerBuyGoodsOnline, BusinessShortCode to StoreShortCode, and PartyB to TillNumber.
+func (m *Mpesa) STKPushBuyGoods(ctx context.Context, req STKBuyGoodsRequest) (*Response, error) {
+	ref := req.AccountReference
+	if ref == "" {
+		ref = fmt.Sprintf("%d", req.TillNumber)
+	}
+	desc := req.TransactionDesc
+	if desc == "" {
+		desc = "Buy Goods Payment"
+	}
+	return m.STKPush(ctx, req.Passkey, STKPushRequest{
+		BusinessShortCode: req.StoreShortCode,
+		TransactionType:   CustomerBuyGoodsOnlineTransactionType,
+		Amount:            req.Amount,
+		PartyA:            req.PhoneNumber,
+		PartyB:            req.TillNumber,
+		PhoneNumber:       req.PhoneNumber,
+		CallBackURL:       req.CallBackURL,
+		AccountReference:  ref,
+		TransactionDesc:   desc,
+	})
 }
 
 // UnmarshalSTKPushCallback decodes the provided value to STKPushCallback.
@@ -568,9 +625,14 @@ func (m *Mpesa) PollSTKStatus(ctx context.Context, passkey string, shortcode uin
 				var apiErr *APIError
 				if errors.As(err, &apiErr) {
 					// 500.001.1001 indicates "The transaction is being processed", continue polling
-					if apiErr.ErrorCode == "500.001.1001" || strings.Contains(strings.ToLower(apiErr.ErrorMessage), "being processed") {
+					if apiErr.ErrorCode == "500.001.1001" ||
+						strings.Contains(strings.ToLower(apiErr.ErrorMessage), "processed") ||
+						strings.Contains(strings.ToLower(apiErr.ErrorMessage), "still under processing") {
 						continue
 					}
+				}
+				if pollCtx.Err() != nil {
+					return nil, pollCtx.Err()
 				}
 				continue
 			}

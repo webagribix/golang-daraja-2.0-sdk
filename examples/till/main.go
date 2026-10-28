@@ -179,20 +179,15 @@ func main() {
 	fmt.Printf(">> Access Token successfully generated (Length: %d chars)\n", len(token))
 
 	fmt.Println("\n[2/3] Initiating Lipa Na M-Pesa Online (Buy Goods STK Push)...")
-	stkReq := mpesa.STKPushRequest{
-		BusinessShortCode: uint(storeShortcode),
-		TransactionType:   mpesa.CustomerBuyGoodsOnlineTransactionType,
-		Amount:            *amountFlag,
-		PartyA:            phoneUint64,
-		PartyB:            uint(tillNumber),
-		PhoneNumber:       phoneUint64,
-		CallBackURL:       callbackURL,
-		AccountReference:  "TillTest",
-		TransactionDesc:   "Testing Buy Goods Till",
-	}
-
-	// Passkey automatically inferred from client Config
-	stkResp, err := client.STKPush(ctx, "", stkReq)
+	stkResp, err := client.STKPushBuyGoods(ctx, mpesa.STKBuyGoodsRequest{
+		StoreShortCode:   uint(storeShortcode),
+		TillNumber:       uint(tillNumber),
+		PhoneNumber:      phoneUint64,
+		Amount:           *amountFlag,
+		CallBackURL:      callbackURL,
+		AccountReference: "TillTest",
+		TransactionDesc:  "Testing Buy Goods Till",
+	})
 	if err != nil {
 		var apiErr *mpesa.APIError
 		if errors.As(err, &apiErr) {

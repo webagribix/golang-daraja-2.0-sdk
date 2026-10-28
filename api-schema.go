@@ -83,7 +83,7 @@ type AuthorizationResponse struct {
 type STKPushRequest struct {
 	// BusinessShortCode is the organization shortcode (Paybill or Store Number - a 5 to 7-digit number)
 	// used to identify an organization and process the transaction.
-	BusinessShortCode uint `json:"BusinessShortCode"`
+	BusinessShortCode uint `json:"BusinessShortCode,string"`
 
 	// Password is a base64 encoded string used for encrypting the request, combining
 	// BusinessShortCode + Passkey + Timestamp. Generated automatically if using client helper methods.
@@ -97,17 +97,17 @@ type STKPushRequest struct {
 	TransactionType TransactionType `json:"TransactionType"`
 
 	// Amount to be transacted which will be deducted from the customer.
-	Amount uint `json:"Amount,omitempty"`
+	Amount uint `json:"Amount,string"`
 
 	// PartyA is the customer phone number sending money in format 2547XXXXXXXX or 2541XXXXXXXX.
 	// Defined as uint64 to support 12-digit phone numbers safely across all system architectures.
-	PartyA uint64 `json:"PartyA"`
+	PartyA uint64 `json:"PartyA,string"`
 
 	// PartyB is the organization receiving the funds (Paybill shortcode or Store/Till number).
-	PartyB uint `json:"PartyB"`
+	PartyB uint `json:"PartyB,string"`
 
 	// PhoneNumber is the mobile number to receive the STK Pin Prompt, typically matching PartyA.
-	PhoneNumber uint64 `json:"PhoneNumber"`
+	PhoneNumber uint64 `json:"PhoneNumber,string"`
 
 	// CallBackURL is a secure HTTPS endpoint where M-Pesa will deliver the asynchronous transaction result.
 	CallBackURL string `json:"CallBackURL"`
@@ -117,6 +117,57 @@ type STKPushRequest struct {
 
 	// TransactionDesc is an additional description sent with the request (max 13 characters).
 	TransactionDesc string `json:"TransactionDesc"`
+}
+
+// STKPaybillRequest contains parameters for initiating a Lipa Na M-Pesa Online STK Push for a Paybill shortcode.
+type STKPaybillRequest struct {
+	// PaybillNumber is your organization's Paybill shortcode (acts as BusinessShortCode and PartyB).
+	PaybillNumber uint `json:"PaybillNumber"`
+
+	// PhoneNumber is the customer phone number sending money (in format 2547XXXXXXXX or 2541XXXXXXXX).
+	PhoneNumber uint64 `json:"PhoneNumber"`
+
+	// Amount to be deducted from customer.
+	Amount uint `json:"Amount"`
+
+	// CallBackURL is the HTTPS webhook URL where M-Pesa delivers the transaction outcome.
+	CallBackURL string `json:"CallBackURL"`
+
+	// AccountReference is the account/order identifier displayed on the user's PIN prompt (e.g. invoice or account number).
+	AccountReference string `json:"AccountReference"`
+
+	// TransactionDesc is any brief description of the payment.
+	TransactionDesc string `json:"TransactionDesc,omitempty"`
+
+	// Passkey is optional; if omitted, the client's default Passkey is used.
+	Passkey string `json:"Passkey,omitempty"`
+}
+
+// STKBuyGoodsRequest contains parameters for initiating a Lipa Na M-Pesa Online STK Push for a Buy Goods Till Number.
+type STKBuyGoodsRequest struct {
+	// StoreShortCode is your Head Office / Store shortcode linked to your Daraja app (acts as BusinessShortCode).
+	StoreShortCode uint `json:"StoreShortCode"`
+
+	// TillNumber is the Buy Goods Till Number (acts as PartyB).
+	TillNumber uint `json:"TillNumber"`
+
+	// PhoneNumber is the customer phone number sending money (in format 2547XXXXXXXX or 2541XXXXXXXX).
+	PhoneNumber uint64 `json:"PhoneNumber"`
+
+	// Amount to be deducted from customer.
+	Amount uint `json:"Amount"`
+
+	// CallBackURL is the HTTPS webhook URL where M-Pesa delivers the transaction outcome.
+	CallBackURL string `json:"CallBackURL"`
+
+	// AccountReference is an optional reference displayed on the user's PIN prompt (defaults to TillNumber if empty).
+	AccountReference string `json:"AccountReference,omitempty"`
+
+	// TransactionDesc is any brief description of the payment.
+	TransactionDesc string `json:"TransactionDesc,omitempty"`
+
+	// Passkey is optional; if omitted, the client's default Passkey is used.
+	Passkey string `json:"Passkey,omitempty"`
 }
 
 // Response represents the initial synchronous response returned by Daraja API upon accepting a request.
@@ -325,7 +376,7 @@ type Callback struct {
 // STKQueryRequest represents the payload for querying the status of an ongoing or completed STK Push transaction.
 type STKQueryRequest struct {
 	// BusinessShortCode is the organization shortcode (Paybill or Store number).
-	BusinessShortCode uint `json:"BusinessShortCode"`
+	BusinessShortCode uint `json:"BusinessShortCode,string"`
 
 	// CheckoutRequestID is the identifier returned in the initial STK Push response.
 	CheckoutRequestID string `json:"CheckoutRequestID"`
