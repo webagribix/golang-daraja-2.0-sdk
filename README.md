@@ -145,36 +145,84 @@ resp, err := client.STKPushPaybill(ctx, mpesa.STKPaybillRequest{
 
 ---
 
-### 2. Handling Webhook Callbacks
+### 2. Handling Webhook Callbacks & Security
 
 Safaricom sends the definitive payment result asynchronously to your `CallBackURL`.
 
+#### A. Verifying & Securing Callback IPs (Built-in Allowlist & Middleware)
+
+To protect your webhook endpoints from unauthorized or fraudulent callback spoofing, the SDK includes built-in validation for official Safaricom Daraja API Gateway IPs and CIDR ranges (`196.201.214.200/28`, `196.207.242.0/24`, etc.).
+
+You can dynamically configure custom IP ranges, CIDRs, and reverse proxy headers:
+
 ```go
-package main
+client, _ := mpesa.New(mpesa.Config{
+	ConsumerKey:    "YOUR_KEY",
+	ConsumerSecret: "YOUR_SECRET",
+	// Optional: add custom IP ranges, CIDRs, or single IPs dynamically
+	AllowedCallbackIPs: []string{
+		"196.207.242.0/24",               // Custom CIDR block
+		"196.201.214.200-196.201.214.214", // Range notation
+		"10.0.0.1",                       // Internal proxy / test IP
+	},
+	// Trust proxy headers (X-Forwarded-For, X-Real-IP, CF-Connecting-IP)
+	// Defaults to true when behind a load balancer (AWS ALB, Cloudflare, Nginx)
+	// TrustProxyHeaders: mpesa.Bool(true),
+})
 
-import (
-	"log"
-	"net/http"
+// Dynamically add more IP ranges at runtime without restarting:
+_ = client.AddAllowedCallbackIPs("172.16.0.0/16")
+```
 
-	mpesa "github.com/webagribix/golang-daraja-2.0-sdk"
-)
+#### B. Standard `net/http` Middleware:
 
+```go
+mux := http.NewServeMux()
+
+// Wrap your callback handler with CallbackIPMiddleware (automatically returns 403 Forbidden for unauthorized IPs)
+mux.Handle("/api/v1/billing/callback", client.CallbackIPMiddleware(http.HandlerFunc(handleMpesaCallback)))
+```
+
+#### C. Gin / Fiber / Echo Integration:
+
+```go
+router.POST("/api/v1/billing/callback", func(c *gin.Context) {
+	// Verify caller IP (inspects X-Forwarded-For, CF-Connecting-IP, or RemoteAddr)
+	clientIP, err := client.VerifyCallbackRequest(c.Request)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "unauthorized callback IP", "ip": clientIP})
+		return
+	}
+	c.Next()
+}, handleMpesaCallback)
+```
+
+#### D. Parsing Callback Payloads & Metadata:
+
+```go
 func handleMpesaCallback(w http.ResponseWriter, r *http.Request) {
-	callback, err := mpesa.UnmarshalSTKPushCallback(r.Body)
+	// Parse directly from io.Reader
+	cb, err := mpesa.ParseSTKCallback(r.Body)
 	if err != nil {
 		http.Error(w, "invalid payload", http.StatusBadRequest)
 		return
 	}
 
-	cb := callback.Body.STKCallback
 	if cb.IsSuccessful() {
-		receipt := cb.ReceiptNumber() // Extracts receipt (e.g. SI28X912)
-		log.Printf("Payment SUCCESS! Receipt: %s, Checkout: %s", receipt, cb.CheckoutRequestID)
+		receipt := cb.ReceiptNumber()      // e.g. "NLJ7RT61SV"
+		amount, _ := cb.Amount()           // float64 (e.g. 10.0)
+		phone, _ := cb.PhoneNumber()       // uint64 (e.g. 254708374149)
+		date := cb.TransactionDate()       // "20231028120000"
+		log.Printf("Payment SUCCESS! Receipt: %s, Amount: KES %.2f, Phone: %d", receipt, amount, phone)
+	} else if cb.IsUserCancelled() {
+		log.Printf("User cancelled PIN prompt: CheckoutRequestID=%s", cb.CheckoutRequestID)
+	} else if cb.IsTimeout() {
+		log.Printf("User timed out: CheckoutRequestID=%s", cb.CheckoutRequestID)
 	} else {
-		log.Printf("Payment FAILED/CANCELLED: Code=%d, Desc=%s", cb.ResultCode, cb.ResultDesc)
+		log.Printf("Payment Failed: Code=%d, Desc=%s", cb.ResultCode, cb.ResultDesc)
 	}
 
-	// Always respond 200 OK to acknowledge receipt
+	// Always acknowledge receipt to Safaricom with 200 OK
 	w.WriteHeader(http.StatusOK)
 }
 ```

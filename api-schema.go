@@ -1,6 +1,10 @@
 package mpesa
 
 import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -275,6 +279,118 @@ func (c *STKCallback) ReceiptNumber() string {
 		}
 	}
 	return ""
+}
+
+// Amount extracts the transacted monetary amount from CallbackMetadata if present.
+func (c *STKCallback) Amount() (float64, bool) {
+	if c == nil {
+		return 0, false
+	}
+	for _, item := range c.CallbackMetadata.Item {
+		if strings.EqualFold(item.Name, "Amount") {
+			switch v := item.Value.(type) {
+			case float64:
+				return v, true
+			case int:
+				return float64(v), true
+			case string:
+				if f, err := strconv.ParseFloat(v, 64); err == nil {
+					return f, true
+				}
+			}
+		}
+	}
+	return 0, false
+}
+
+// PhoneNumber extracts the customer phone number from CallbackMetadata if present.
+func (c *STKCallback) PhoneNumber() (uint64, bool) {
+	if c == nil {
+		return 0, false
+	}
+	for _, item := range c.CallbackMetadata.Item {
+		if strings.EqualFold(item.Name, "PhoneNumber") {
+			switch v := item.Value.(type) {
+			case float64:
+				return uint64(v), true
+			case uint64:
+				return v, true
+			case int64:
+				return uint64(v), true
+			case string:
+				if u, err := strconv.ParseUint(v, 10, 64); err == nil {
+					return u, true
+				}
+			}
+		}
+	}
+	return 0, false
+}
+
+// TransactionDate extracts the transaction timestamp string (e.g. "20231028120000") from CallbackMetadata if present.
+func (c *STKCallback) TransactionDate() string {
+	if c == nil {
+		return ""
+	}
+	for _, item := range c.CallbackMetadata.Item {
+		if strings.EqualFold(item.Name, "TransactionDate") {
+			switch v := item.Value.(type) {
+			case string:
+				return v
+			case float64:
+				return fmt.Sprintf("%.0f", v)
+			}
+		}
+	}
+	return ""
+}
+
+// Common Safaricom Daraja STK Push Result Codes.
+const (
+	ResultCodeSuccess            = 0
+	ResultCodeInsufficientFunds  = 1
+	ResultCodeLessThanMinimum    = 2
+	ResultCodeMoreThanMaximum    = 3
+	ResultCodeExceededLimit      = 4
+	ResultCodeUserCancelled      = 1032
+	ResultCodeTransactionTimeout = 1037
+)
+
+// IsUserCancelled returns true if the customer cancelled the STK Push prompt (ResultCode 1032).
+func (c *STKCallback) IsUserCancelled() bool {
+	return c != nil && c.ResultCode == ResultCodeUserCancelled
+}
+
+// IsTimeout returns true if the STK Push expired/timed out waiting for user input (ResultCode 1037).
+func (c *STKCallback) IsTimeout() bool {
+	return c != nil && c.ResultCode == ResultCodeTransactionTimeout
+}
+
+// ParseSTKCallback parses an incoming Safaricom Daraja STK Push callback JSON payload from an io.Reader.
+func ParseSTKCallback(r io.Reader) (*STKCallback, error) {
+	var payload STKPushCallback
+	if err := json.NewDecoder(r).Decode(&payload); err != nil {
+		return nil, fmt.Errorf("mpesa: failed to decode STK callback JSON: %w", err)
+	}
+	return &payload.Body.STKCallback, nil
+}
+
+// ParseSTKCallbackBytes parses an incoming Safaricom Daraja STK Push callback JSON payload from raw bytes.
+func ParseSTKCallbackBytes(data []byte) (*STKCallback, error) {
+	var payload STKPushCallback
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return nil, fmt.Errorf("mpesa: failed to unmarshal STK callback JSON: %w", err)
+	}
+	return &payload.Body.STKCallback, nil
+}
+
+// UnmarshalSTKPushCallback decodes an STKPushCallback root payload from an io.Reader.
+func UnmarshalSTKPushCallback(r io.Reader) (*STKPushCallback, error) {
+	var payload STKPushCallback
+	if err := json.NewDecoder(r).Decode(&payload); err != nil {
+		return nil, fmt.Errorf("mpesa: failed to decode STK callback JSON: %w", err)
+	}
+	return &payload, nil
 }
 
 // B2CRequest represents the payload for initiating a Business-to-Consumer payment.

@@ -87,6 +87,7 @@ type Mpesa struct {
 	passkey        string
 	initiatorPwd   string
 	customCert     []byte
+	ipValidator    *IPValidator
 }
 
 var (
@@ -169,6 +170,20 @@ type Config struct {
 
 	// CertificateFile is an optional path to a .cer / .pem certificate file
 	CertificateFile string
+
+	// AllowedCallbackIPs specifies custom IPs, CIDRs, or IP ranges to allow for webhook callbacks.
+	// Defaults to official Safaricom Daraja IP ranges if empty.
+	AllowedCallbackIPs []string
+
+	// DisableDefaultSafaricomIPs disables the built-in Safaricom IP ranges, allowing only AllowedCallbackIPs.
+	DisableDefaultSafaricomIPs bool
+
+	// TrustProxyHeaders enables extracting the real client IP from reverse proxy headers
+	// (X-Forwarded-For, X-Real-IP, CF-Connecting-IP, True-Client-IP). Defaults to true.
+	TrustProxyHeaders *bool
+
+	// CustomProxyHeaders allows specifying custom proxy header keys to inspect in priority order.
+	CustomProxyHeaders []string
 }
 
 // New creates and initializes a new M-Pesa Daraja client using the provided Config struct.
@@ -184,6 +199,24 @@ func New(cfg Config) (*Mpesa, error) {
 		}
 	}
 
+	trustProxy := true
+	if cfg.TrustProxyHeaders != nil {
+		trustProxy = *cfg.TrustProxyHeaders
+	}
+
+	opts := []IPValidatorOption{
+		WithTrustProxyHeaders(trustProxy),
+	}
+	if len(cfg.CustomProxyHeaders) > 0 {
+		opts = append(opts, WithProxyHeaders(cfg.CustomProxyHeaders...))
+	}
+	if !cfg.DisableDefaultSafaricomIPs {
+		opts = append(opts, WithDefaultSafaricomIPs())
+	}
+	if len(cfg.AllowedCallbackIPs) > 0 {
+		opts = append(opts, WithAllowedIPs(cfg.AllowedCallbackIPs...))
+	}
+
 	app := &Mpesa{
 		client:         c,
 		environment:    cfg.Environment,
@@ -193,6 +226,7 @@ func New(cfg Config) (*Mpesa, error) {
 		passkey:        cfg.Passkey,
 		initiatorPwd:   cfg.InitiatorPassword,
 		customCert:     cfg.CertificatePEM,
+		ipValidator:    NewIPValidator(opts...),
 	}
 
 	if cfg.CertificateFile != "" {
@@ -235,6 +269,7 @@ func NewApp(c HttpClient, consumerKey, consumerSecret string, env Environment) *
 
 		consumerKey:    consumerKey,
 		consumerSecret: consumerSecret,
+		ipValidator:    NewIPValidator(WithDefaultSafaricomIPs()),
 	}
 }
 
@@ -1007,4 +1042,49 @@ func decodeResponse(res *http.Response) (*Response, error) {
 	}
 
 	return &resp, nil
+}
+
+// IPValidator returns the underlying IPValidator instance used by this Mpesa client.
+func (m *Mpesa) IPValidator() *IPValidator {
+	if m.ipValidator == nil {
+		m.ipValidator = NewIPValidator(WithDefaultSafaricomIPs())
+	}
+	return m.ipValidator
+}
+
+// IsAllowedCallbackIP checks whether an IP address or remoteAddr string (e.g. "196.201.214.200:44321") is authorized.
+func (m *Mpesa) IsAllowedCallbackIP(ipOrRemoteAddr string) bool {
+	return m.IPValidator().IsAllowedIP(ipOrRemoteAddr)
+}
+
+// GetClientIP extracts the resolved client IP from an incoming HTTP request, inspecting configured proxy headers or RemoteAddr.
+func (m *Mpesa) GetClientIP(r *http.Request) string {
+	return m.IPValidator().GetClientIP(r)
+}
+
+// VerifyCallbackRequest verifies if an incoming HTTP request originated from an authorized Safaricom callback IP.
+// Returns the resolved client IP on success, or an error if unauthorized.
+func (m *Mpesa) VerifyCallbackRequest(r *http.Request) (string, error) {
+	return m.IPValidator().VerifyRequest(r)
+}
+
+// CallbackIPMiddleware returns a standard net/http middleware that protects Daraja callback routes.
+// Requests originating from unauthorized IPs are rejected with HTTP 403 Forbidden.
+func (m *Mpesa) CallbackIPMiddleware(next http.Handler) http.Handler {
+	return m.IPValidator().Middleware(next)
+}
+
+// AddAllowedCallbackIPs dynamically registers additional IP addresses, CIDR blocks, or IP ranges at runtime.
+func (m *Mpesa) AddAllowedCallbackIPs(entries ...string) error {
+	return m.IPValidator().AddAllowedIPs(entries...)
+}
+
+// SetAllowedCallbackIPs dynamically replaces the allowed IP list at runtime.
+func (m *Mpesa) SetAllowedCallbackIPs(entries ...string) error {
+	return m.IPValidator().SetAllowedIPs(entries...)
+}
+
+// GetAllowedCallbackIPs returns all currently authorized IP addresses, CIDR blocks, and ranges.
+func (m *Mpesa) GetAllowedCallbackIPs() []string {
+	return m.IPValidator().GetAllowedIPs()
 }
